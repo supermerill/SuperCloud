@@ -16,7 +16,7 @@ namespace supercloud {
 
 
     PhysicalServer::PhysicalServer(std::shared_ptr<FileSystemManager> fs, const std::filesystem::path& folderPath) :
-        myFs(fs), myPeerId(rand_u63()){
+        myFs(fs), myPeerId(rand_u63()), has_peer_id(false){
         messageManager = ConnectionMessageManager::create(*this);
         clusterIdMananger = std::make_shared<ServerIdDb>(*this, folderPath / "clusterIds.properties");
         clusterIdMananger->load();
@@ -43,82 +43,100 @@ namespace supercloud {
         }
     }
 
+    int64_t update_check_NO_COMPUTER_ID = 0;
     void PhysicalServer::update() {
-        bool quickUpdate = true;
-        while (getComputerId() == NO_COMPUTER_ID) {
-            if (quickUpdate) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            } else {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
-            }
-            quickUpdate = false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5000)); //FIXME only for testing purpose to reduce clutter, delete
+        //bool quickUpdate = true;
+        //can't update until you're connected
+        if (getComputerId() == NO_COMPUTER_ID) {
+            //if (quickUpdate) {
+            //} else {
+            //    std::this_thread::sleep_for(std::chrono::seconds(60));
+            //}
+            //quickUpdate = false;
 
             // in case of something went wrong, recheck.
-            if (getServerIdDb().getClusterId() != NO_CLUSTER_ID) {
+            /*if (getServerIdDb().getClusterId() != NO_CLUSTER_ID) {
                 chooseComputerId();
+            }*/
+            if (update_check_NO_COMPUTER_ID == 0 && last_minute_update != 0) {
+                update_check_NO_COMPUTER_ID = last_minute_update;
             }
-        }
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-        
-        {std::lock_guard lock(this->peers_mutex);
-            log(std::to_string(getPeerId() % 100) + "======== peers =======");
-            for (PeerPtr& p : this->peers) {
-                log(std::to_string(getPeerId() % 100) + p->getIP() + ":" + p->getPort() + " " + p->getComputerId() + " " + p->isAlive());
+            {std::lock_guard lock(this->peers_mutex);
+                int nbAlive = 0;
+                if ( (peers.empty() || !peers.front()->isAlive()) && update_check_NO_COMPUTER_ID != last_minute_update){
+                    error("Error, There is no connection still alive and i still don't have a computer id. Please connect to a valid peer or create a new cluster before calling update.");
+                }
             }
-            log(std::to_string(getPeerId() % 100) + "======================");
+            return;
         }
 
+        //std::this_thread::sleep_for(std::chrono::seconds(5));
         int64_t now = get_current_time_milis(); // just like java (new Date()).getTime();
-
+        ByteBuff now_msg = ByteBuff{}.putLong(now).flip();
+       
         //clean peer list
         {std::lock_guard lock(this->peers_mutex);
-            //remove peers that are me
-        for (auto itPeers = custom::it{ peers }; itPeers.has_next();) {
-                Peer* nextP = itPeers.next().get();
-                if (nextP->getComputerId() == this->getComputerId()) {
-                    std::cerr<<"Error: a peer is me (same computerid) " << this->getComputerId() << "\n";
-                    getServerIdDb().removeBadPeer(nextP, this->getComputerId());
-                    itPeers.erase();
-                } else if (nextP->getKey().getPeerId() == this->getPeerId()) {
-                    std::cerr << "Error: a peer is me (same peerId) " << this->getPeerId() << "\n";
-                    getServerIdDb().removeBadPeer(nextP, this->getComputerId());
-                    itPeers.erase();
-                } else { 
-                    ++itPeers;
-                }
+            log(std::to_string(getPeerId() % 100) + " ======== peers =======");
+            for (PeerPtr& p : this->peers) {
+                log(std::to_string(getPeerId() % 100) + " " + p->getIP() + ":" + p->getPort() + " cid=" + p->getComputerId() + " pid=" + (p->getPeerId() % 100) + p->isAlive());
             }
-            //remove old connection from same peer
-            //remove old connection from unregistered peers
-            std::unordered_map<uint16_t, Peer*> states;
-            for (const PeerPtr& p : peers) {
-                if (states.find(p->getComputerId()) == states.end() || states[p->getComputerId()]->getState() </*lowerThan*/ (p->getState())) {
-                    states[p->getComputerId()] = p.get();
+            log(std::to_string(getPeerId() % 100) + " ======================");
+
+            //remove bad peers
+            for (auto itPeers = custom::it{ peers }; itPeers.has_next();) {
+                PeerPtr& nextP = itPeers.next();
+                if (this->getComputerId() != NO_COMPUTER_ID && nextP->getComputerId() == this->getComputerId()) {
+                    std::cerr<<"Error: a peer is me (same computerid) " << this->getComputerId() << "\n";
+                    getServerIdDb().removeBadPeer(nextP.get(), this->getComputerId());
+                    nextP->close();
+                    itPeers.erase();
+                } else if (this->hasPeerId() && nextP->getKey().getPeerId() == this->getPeerId()) {
+                    std::cerr << "Error: a peer is me (same peerId) " << this->getPeerId() << "\n";
+                    getServerIdDb().removeBadPeer(nextP.get(), this->getComputerId());
+                    nextP->close();
+                    itPeers.erase();
+                } else if (!nextP->isAlive()){
+                    std::cerr << "Error: a peer is me (same peerId) " << this->getPeerId() << "\n";
+                    getServerIdDb().removeBadPeer(nextP.get(), this->getComputerId());
+                    nextP->close();
+                    itPeers.erase();
+                }else if ((nextP->getComputerId() == 0 || nextP->getComputerId() == NO_COMPUTER_ID) && nextP->createdAt < now - 2 * 60 * 1000) {
+                    std::cerr << "Error: a peer has no id and is old(>2min) : " << this->getPeerId() << "\n";
+                    nextP->close();
+                    itPeers.erase();
                 }
             }
 
-            for (auto itPeers = custom::it{ peers }; itPeers.has_next();) {
-                Peer& nextP = *itPeers.next();
-                if (nextP.getComputerId() <= 0 && nextP.createdAt < now - 2 * 60 * 1000) {
-                    std::cerr<<"Error: a peer has no id and is old(>2min) : " << this->getPeerId()<<"\n";
-                    if (nextP.isAlive()) {
-                        nextP.close();
-                    }
-                    itPeers.erase();
-                } else if (nextP.getState() </*.lowerThan*/ (states[nextP.getComputerId()]->getState())) {
-                    std::cerr<<"Error: multiple peer for " << this->getPeerId() << " : deleting the one with status " << nextP.getState()<<"\n";
-                    if (nextP.isAlive()) {
-                        nextP.close();
-                    }
-                    itPeers.erase();
+            // remove duplicate peers
+            std::unordered_map<int16_t, uint16_t> count;
+            for (const PeerPtr& p : peers) {
+                count[p->getComputerId()]++;
+            }
+
+            foreach(itPeer, peers) {
+                 if (count[(*itPeer)->getComputerId()] > 1) {
+                    std::cerr<<"Error: multiple peer for " << this->getPeerId() << " : deleting one of multiple instances \n";
+                    count[(*itPeer)->getComputerId()]--;
+                    (*itPeer)->close();
+                    itPeer.erase();
                 }
             }
         }
 
+        PeerList copy = getPeersCopy();
+
         log(std::to_string(getPeerId() % 100) + " update " + myFs->getDrivePath()+"\n");
-        for (const PeerPtr& peer : peers) {
+        for (const PeerPtr& peer : copy) {
             log(std::to_string(getPeerId() % 100 ) + " update peer " + peer->getPeerId() % 100+"\n");
-            //if we emit something to someone, wait a bit more for the next update.
-            quickUpdate = quickUpdate || peer->ping();
+            // If the peer is fully connected, emit timer message.
+            if (getServerIdDb().has_aes(*peer)) {
+                this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_SECOND, now_msg);
+                if (now - last_minute_update > 1000 * 60) {
+                    this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_MINUTE, now_msg);
+                }
+            }
         }
         // toutes les heures
         if (lastDirUpdate + 1000 * 60 * 60 < now) {
@@ -127,6 +145,9 @@ namespace supercloud {
             lastDirUpdate = now;
         }
 
+        if (now - last_minute_update > 1000 * 60) {
+            last_minute_update = now;
+        }
     }
 
     /**
@@ -151,7 +172,7 @@ namespace supercloud {
                             //create this connection socket
                             mySocket->accept(*new_socket);
                             log("connected to a socketserver\n");
-                            PeerPtr peer{ new Peer{ *this, new_socket->local_endpoint().address().to_string(), new_socket->local_endpoint().port() } };
+                            PeerPtr peer = Peer::create(*this, new_socket->local_endpoint().address().to_string(), new_socket->local_endpoint().port());
                             std::thread clientSocketThread([this, peer, new_socket]() {
                                 //try {
                                     if (initConnection(peer, new_socket)) {
@@ -209,18 +230,17 @@ namespace supercloud {
                         }
                     }
                     if (!otherPeer) {
-                        log(std::to_string(getPeerId() % 100 ) + " 'new' accept connection to " + peer->getKey().getPeerId() % 100 + "\n");
+                        log(std::to_string(getPeerId() % 100 ) + " 'new' accept connection to " + peer->getPeerId() % 100 + "\n");
                         // peers.put(peer->getKey(), peer);
                         if (!peers.contains(peer)) {
-                            log(std::to_string(getPeerId() % 100 ) + " 'warn' PROPAGATE " + peer->getPeerId() % 100 + "!\n");
+                            //log(std::to_string(getPeerId() % 100 ) + " PROPAGATE " + peer->getPeerId() % 100 + "!\n");
                             // new peer: propagate!
                             peers.push_back(peer);
                             for (PeerPtr& oldPeer : peers) {
-                                if (oldPeer->isAlive()) {
-                                   log(std::to_string(getPeerId() % 100 ) + " 'warn' PROPAGATE to " + oldPeer->getPeerId() % 100+"\n");
+                                if (oldPeer->isAlive() && oldPeer->getPeerId() != peer->getPeerId()) {
+                                   log(std::to_string(getPeerId() % 100 ) + " PROPAGATE new peer '"+(peer->getPeerId() % 100)+"' to " + oldPeer->getPeerId() % 100+"\n");
                                     // MyServerList.get().write(peers, oldPeer);
-                                    messageManager->sendServerList(oldPeer->getPeerId(), peers);
-                                    oldPeer->flush();
+                                    messageManager->sendServerList(*oldPeer, getServerIdDb().getRegisteredPeers(), peers);
                                 }
                             }
                         } else {
@@ -275,9 +295,11 @@ namespace supercloud {
                 }
 
                 // test if id is ok
-                if (peer->getPeerId() == getPeerId()) {
-                    std::cerr << getPeerId() % 100 << " my peerid is equal to  " << peer->getKey().getPeerId() % 100<<"\n";
-                    return rechooseId();
+                //TODO check if still needed
+                if (peer->getPeerId() == getPeerId() && hasPeerId()) {
+                    error(std::to_string(getPeerId() % 100) + " my peerid is equal to  " + peer->getKey().getPeerId() % 100 + "\n");
+                    //return rechooseId();
+                    return false;
                 }
                 // TODO: test if id is inside
             //}
@@ -325,7 +347,7 @@ namespace supercloud {
             }
             // Peer peer = peers.get(new PeerKey(addr.getAddress(), addr.getPort()));
             if (!peer) {
-                peer = PeerPtr{ new Peer{*this, addr.address().to_string(), addr.port()} };
+                peer = Peer::create(*this, addr.address().to_string(), addr.port());
             }
             if (peer && !peer->isAlive()) {
                 //try {
@@ -441,12 +463,14 @@ namespace supercloud {
         return myFs.get();
     }
 
-    bool PhysicalServer::rechooseId() {
-        std::cout<<"ERROR: i have to choose an other id...."<<"\n";
-        // change id
-        myPeerId = rand_u63();
-        if (myPeerId <= 0)
-            myPeerId = -myPeerId;
+
+    void PhysicalServer::setPeerId(uint64_t new_peer_id) {
+        msg(std::to_string(getPeerId()%100) + " choose my new peer id : " + new_peer_id +" ("+(new_peer_id%100)+")");
+        myPeerId = new_peer_id;
+        has_peer_id = true;
+    }
+
+    bool PhysicalServer::reconnect() {
         // reconnect all connections
         PeerList oldConnection;
         { std::lock_guard lock(peers_mutex);
@@ -454,9 +478,16 @@ namespace supercloud {
             peers.clear();
         }
         for (PeerPtr& oldp : oldConnection) {
-            oldp->close();
-            std::cout<<"RECONNECT " << oldp->getIP() + " : " << oldp->getPort()<<"\n";
-            return connectTo(oldp->getIP(), oldp->getPort());
+            if (oldp->isAlive()) {
+                oldp->close();
+                std::cout << "RECONNECT " << oldp->getIP() + " : " << oldp->getPort() << "\n";
+                const std::string& path = oldp->getIP();
+                uint16_t port = oldp->getPort();
+                std::thread updaterThread([this, path, port]() {
+                    this->connectTo(path, port);
+                    });
+                updaterThread.detach();
+            }
         }
         return false;
     }
@@ -585,10 +616,12 @@ namespace supercloud {
         list.push_back(listener);
     }
 
-    void PhysicalServer::propagateMessage(uint64_t senderId, uint8_t messageId, ByteBuff& message) {
+    void PhysicalServer::propagateMessage(PeerPtr sender, uint8_t messageId, ByteBuff& message) {
         std::vector<std::shared_ptr<AbstractMessageManager>>& lst = listeners[messageId];
         for (std::shared_ptr<AbstractMessageManager>& listener : lst) {
-            listener->receiveMessage(senderId, messageId, message);
+            if (!sender->isAlive()) { return; }
+            // receiveMessage get message by value -> it gets a "copy", so it's okay to send the same to evryone.
+            listener->receiveMessage(sender, messageId, message);
         }
     }
 
@@ -613,96 +646,12 @@ namespace supercloud {
         return *clusterIdMananger;
     }
 
-    void PhysicalServer::chooseComputerId() {
-        // do not run this method in multi-thread (i use getServerIdDb() because i'm the only one to use it, to avoid possible dead sync issues)
-        { //std::lock_guard choosecomplock(getServerIdDb().synchronize());
-            std::lock_guard choosecomplock(clusterIdMananger->synchronize());
-
-            // check if we have a clusterId
-            log(std::to_string(getPeerId() % 100 ) + " getServerIdDb().myComputerId=" + getServerIdDb().getComputerId()+"\n");
-            if (getServerIdDb().getComputerId() == NO_COMPUTER_ID) {
-                //first, wait a bit to let us contact everyone.
-                PeerList lstpeerCanConnect;
-                { std::lock_guard peerlock(this->peers_mutex);
-                    lstpeerCanConnect = peers;
-                }
-                log(std::to_string(getPeerId() % 100 ) + " lstpeerCanConnect.size=" + lstpeerCanConnect.size()+"\n");
-                //log(std::to_string(getPeerId() % 100 ) + " receivedServerList=" + getServerIdDb().getReceivedServerList()+"\n";
-                for (PeerPtr& okP : getServerIdDb().getReceivedServerList()) {
-                    if (lstpeerCanConnect.contains(okP)) {
-                        lstpeerCanConnect.erase_from_ptr(okP);
-                    }
-                }
-                log(std::to_string(getPeerId() % 100 ) + " lstpeerCanConnect.restsize=" + lstpeerCanConnect.size()+"\n");
-                if (lstpeerCanConnect.empty()) {
-                    // ok, i am connected with everyone i can access and i have received every serverlist.
-
-                    // choose a random one
-                    uint16_t choosenId = (uint16_t)(rand_u63()%(std::numeric_limits<uint16_t>::max()));
-                    // while it's not already taken
-                    while (getServerIdDb().isChoosen(choosenId)) {
-                        log(std::to_string(getPeerId() % 100 ) + " ClusterId " + choosenId + " is already taken, i will choose a new one\n");
-                        choosenId = (uint16_t)(rand_u63() % (std::numeric_limits<uint16_t>::max()));
-                        if (choosenId < 0) {
-                            log(std::to_string(getPeerId() % 100 ) + " choosenId " + choosenId + " < 0"+"\n");
-                            choosenId = (uint16_t)-choosenId;
-                            log(std::to_string(getPeerId() % 100 ) + " now choosenId " + choosenId + " > 0 !!"+"\n");
-                        }
-                    }
-
-                    log(std::to_string(getPeerId() % 100 ) + " CHOOSE A NEW COMPUTER ID is =" + choosenId+"\n");
-                    getServerIdDb().setComputerId( choosenId);
-                    // emit this to everyone
-                    // writeBroadcastMessage(AbstractMessageManager.GET_SERVER_PUBLIC_KEY, new uint8_tBuff());
-                    { std::lock_guard peerlock(this->peers_mutex);
-                        log(std::to_string(getPeerId() % 100 ) + " want to send it to " + peers.size()+"\n");
-                        for (PeerPtr& peer : peers) {
-                            log(std::to_string(getPeerId() % 100 ) + " want to send it to peers " + peer->getPeerId() % 100 + "  " + peer->getComputerId()+"\n");
-                            // as we can't emit directly (no message to encode), a request to them should trigger a request from them.
-                            getServerIdDb().requestPublicKey(*peer);
-                        }
-                    }
-                }
-
-            } else {
-                // yes
-                // there are a conflict?
-
-                if (getServerIdDb().getPublicKey(getServerIdDb().getComputerId()) != PublicKey{}
-                        && getServerIdDb().getPublicKey(getServerIdDb().getComputerId()) != getServerIdDb().getPublicKey()) {
-                    log(std::string("id is already there, with my id : ") + getServerIdDb().getComputerId()+"\n");
-                    log(std::string(", my pub key : ") + getServerIdDb().getPublicKey()+"\n");
-                    log(std::string(",  their: ") + getServerIdDb().getPublicKey(getServerIdDb().getComputerId()) +"\n");
-                    //log(std::string(", my pub key : " + Arrays.toString(getServerIdDb().publicKey.getEncoded())+"\n");
-                    //log(std::string(",  their: " + Arrays.toString(getServerIdDb().id2PublicKey.get(getServerIdDb().myComputerId).getEncoded())+"\n");
-                    // yes
-                    // i choose my id recently?
-                    int64_t now = get_current_time_milis(); // just like java (new Date()).getTime();
-                    if (now - getServerIdDb().getTimeChooseId() < 10000) {
-                        // change!
-                        // how: i have to reset all my connections?
-                        // getServerIdDb().timeChooseId
-                       error(std::to_string(getPeerId() % 100) + " ERROR! my ComputerId is already taken. Please destroy this instance/peer/server and create an other one.\n");
-                        throw std::runtime_error("ERROR! my ComputerId is already taken. Please destroy this instance/peer/server and create an other one.");
-                    } else {
-                        error(std::to_string(getPeerId() % 100) + " Error, an other server/instance has picked the same ComputerId as me. Both of us should be destroyed and re-created, at a time when we can communicate with each other.\n");
-                    }
-                } else {
-                    // no
-                    // nothing todo do ! everything is ok!!
-                    log("ComputerId : everything ok, nothing to do\n");
-                }
-
-            }
-        }
-
-    }
 
     void PhysicalServer::initializeNewCluster() {
         myInformalState = ServerConnectionState::SOLO;
 
         log(std::to_string(getPeerId() % 100 ) + " CHOOSE A NEW COMPUTER ID to 1 "+"\n");
-        getServerIdDb().setComputerId(1);
+        getServerIdDb().setComputerId(1, ServerIdDb::ComputerIdState::DEFINITIVE);
         if (getServerIdDb().getClusterId() == -1)
             getServerIdDb().newClusterId();
         log(std::to_string(getPeerId() % 100 ) + " creation of cluster " + getServerIdDb().getClusterId()+"\n");
@@ -710,16 +659,16 @@ namespace supercloud {
     }
 
     uint16_t PhysicalServer::getComputerId(uint64_t senderId) {
-        if (senderId == this->myPeerId) return getComputerId();
+        if (senderId == this->getPeerId()) return getComputerId();
         PeerPtr p = getPeerPtr(senderId);
-        if (p && p->hasState(Peer::PeerConnectionState::CONNECTED_W_AES)) {
+        if (p && getServerIdDb().has_aes(*p)) {
             return p->getComputerId();
         }
         return NO_COMPUTER_ID;
     }
 
     uint64_t PhysicalServer::getPeerIdFromCompId(uint16_t compId) {
-        if (this->getComputerId() == compId) return this->myPeerId;
+        if (this->getComputerId() == compId) return this->getPeerId();
         { std::lock_guard lock(this->peers_mutex);
             for (PeerPtr& p : peers) {
                 if (p->isAlive() && p->getComputerId() == compId) {
@@ -749,7 +698,7 @@ namespace supercloud {
         size_t nb = 0;
         { std::lock_guard lock(this->peers_mutex);
             for (PeerPtr& p : peers) {
-                if (p->isAlive() && p->hasState(Peer::PeerConnectionState::CONNECTED_W_AES)) nb++;
+                if (p->isAlive() && getServerIdDb().has_aes(*p)) nb++;
             }
         }
         return nb;

@@ -3,13 +3,17 @@
 #include <string>
 #include <iostream>
 #include <sstream>
-#include <stdlib.h>     /* srand, rand */
+#include <random>
 #include <stdexcept>
 #include <vector>
 
+#define SLOW_NETWORK_FOR_DEBUG 1
+
 namespace supercloud{
+	//FIXME constexpr
 	inline const uint16_t NO_COMPUTER_ID = uint16_t(-1);
 	inline const uint64_t NO_CLUSTER_ID = uint64_t(-1);
+	inline const uint64_t NO_PEER_ID = uint64_t(-1);
 
 	typedef std::string InetAdress;
 	typedef std::pair<InetAdress, uint16_t> InetSocketAddress;
@@ -22,19 +26,9 @@ namespace supercloud{
 		return stream.str();
 	}
 
-	inline uint64_t rand_u63() {
-		uint64_t result = 0;
-		//rand_max is at least 32k
-		result = rand() & 0xFFFF;
-		result |= uint64_t(rand() & 0xFFFF) << 16;
-		result |= uint64_t(rand() & 0xFFFF) << 32;
-		result |= uint64_t(rand() & 0x7FFF) << 48; // avoid problems with signed/unsigned
-		return result;
-	}
-	
-	inline char rand_char() {
-		return char(rand() & 0x7F);
-	}
+	uint64_t rand_u63();
+	uint16_t rand_u16();
+	uint8_t rand_u8();
 
 	//inline void  compareDirect(const std::string& fileName, int min, int max);
 

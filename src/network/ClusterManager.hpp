@@ -7,82 +7,82 @@
 
 #include "../utils/Utils.hpp"
 #include "../utils/ByteBuff.hpp"
+#include "Peer.hpp"
 
 namespace supercloud {
+	enum class UnnencryptedMessageType : uint8_t {
+		/// <summary>
+		/// Fake message to notify listener for closing the socket.
+		/// The reason can be get from the peer object
+		/// </summary>
+		CONNECTION_CLOSED,
+		/// <summary>
+		/// get the distant server ids (and port)
+		/// </summary>
+		GET_SERVER_ID,
+		/// <summary>
+		/// receive the peer id (if any), the computer id (if any) and the listening port of this peer.
+		/// or just a response to GET_SERVER_ID
+	    /// data : uint8_t[8] -> long->serverid
+		/// </summary>
+		SEND_SERVER_ID,
+		/// <summary>
+		/// Ask the list of servers in this cluster
+		/// </summary>
+		GET_SERVER_LIST,
+		/// <summary>
+		///  Send his current server list (register & connected) (only ids, no ip)
+		/// </summary>
+		SEND_SERVER_LIST,
+		/// <summary>
+		/// request a SEND_SERVER_PUBLIC_KEY
+		/// </summary>
+		GET_SERVER_PUBLIC_KEY,
+		/// <summary>
+		/// Send his public key.<br>
+		/// </summary>
+		SEND_SERVER_PUBLIC_KEY,
+		/// <summary>
+		/// send a public-private encrypted message to be encoded.
+		/// </summary>
+		GET_VERIFY_IDENTITY,
+		/// <summary>
+		/// Send back the message with a public-private encryption, to tell the other one i am really me.
+		/// Maybe also with my own message to encoded
+		/// </summary>
+		SEND_VERIFY_IDENTITY,
+		/// <summary>
+		///  request an AES
+		/// </summary>
+		GET_SERVER_AES_KEY,
+		/// <summary>
+		///  emit our AES (encrypted with our private & his public key)
+		/// </summary>
+		SEND_SERVER_AES_KEY,
+		/// <summary>
+		/// For priority unencrypted message (ping or things like that)
+		/// </summary>
+		PRIORITY_CLEAR,
+		/// <summary>
+		/// Fake message to notify the listeners every second, from the CLusterManager/PhysicalServer update thread.
+		/// The message contains the current time milis
+		/// </summary>
+		TIMER_SECOND,
+		/// <summary>
+		/// Fake message to notify the listeners every minute, from the CLusterManager/PhysicalServer update thread.
+		/// The message contains the current time milis
+		/// </summary>
+		TIMER_MINUTE,
+		/// <summary>
+		/// If the Id of the message is at least this number, then it's an encrypted message.
+		/// </summary>
+		FIRST_ENCODED_MESSAGE = 100,
+	};
+	constexpr auto operator*(UnnencryptedMessageType emt) noexcept{return static_cast<uint8_t>(emt);}
 
 	class AbstractMessageManager {
 	public:
-		//list of message id
-
-		// ----------------------------------- connection & leader election ---------------------------------------------
-			/**
-			 * get the distant server id, for leader election
-			 * no data
-			 */
-		inline static uint8_t GET_SERVER_ID = (uint8_t)1;
-		/** if i detect an other server with my id, i have to create a new id, and use this command to send my new id to everyone.
-		 * or just a response to GET_SERVER_ID
-		 * data : uint8_t[8] -> long -> serverid
-		 */
-		inline static uint8_t SEND_SERVER_ID = (uint8_t)2;
-
-		/**
-		 * Ask the list of servers in this cluster
-		 */
-		inline static uint8_t  GET_SERVER_LIST = (uint8_t)3;
-		/**
-		 * Send his current server list
-		 */
-		inline static uint8_t  SEND_SERVER_LIST = (uint8_t)4;
-		/**
-		 * Ask the port needed to contact him
-		 */
-		inline static uint8_t  GET_LISTEN_PORT = (uint8_t)5;
-		/**
-		 * Send his port where he listen new connections
-		 */
-		inline static uint8_t  SEND_LISTEN_PORT = (uint8_t)6;
-
-		/**
-		 * request a SEND_SERVER_PUBLIC_KEY
-		 */
-		inline static uint8_t  GET_SERVER_PUBLIC_KEY = (uint8_t)7;
-		/**
-		 * Send his public key.<br>
-		 */
-		inline static uint8_t  SEND_SERVER_PUBLIC_KEY = (uint8_t)8;
-
-		/**
-		 * send a public-private encrypted message to be encoded.
-		 */
-		inline static uint8_t  GET_VERIFY_IDENTITY = (uint8_t)9;
-		/**
-		 * Send back the message with a public-private encryption, to tell the other one i am really me.
-		 */
-		inline static uint8_t  SEND_VERIFY_IDENTITY = (uint8_t)10;
-		/**
-		 * request a AES
-		 */
-		inline static uint8_t  GET_SERVER_AES_KEY = (uint8_t)11;
-		/**
-		 * emit our AES (encrypted with our private & his public key)
-		 */
-		inline static uint8_t  SEND_SERVER_AES_KEY = (uint8_t)12;
-
-		/**
-		 * For priority unencrypted message
-		 */
-		inline static uint8_t  PRIORITY_CLEAR = (uint8_t)13;
-
-		/**
-		 * Used to see if the message is aes-encoded
-		 */
-		inline static uint8_t  LAST_UNENCODED_MESSAGE = (uint8_t)14;
-
-
-		virtual void receiveMessage(uint64_t senderId, uint8_t messageId, ByteBuff& message) = 0;
-
-
+		virtual void receiveMessage(PeerPtr sender, uint8_t messageId, ByteBuff message) = 0;
 	};
 
 	class ClusterManager {
@@ -135,6 +135,7 @@ namespace supercloud {
 		 * @return number of connected peer (approximation).
 		 */
 		virtual int32_t connect() = 0;
+		virtual bool reconnect() = 0;
 
 		/**
 		 * shutdown

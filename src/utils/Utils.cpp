@@ -15,36 +15,67 @@ namespace supercloud{
 
 	std::string id2str[256];
 	void init_id2str(){
-		id2str[AbstractMessageManager::GET_SERVER_ID] = "GET_SERVER_ID";
-		id2str[AbstractMessageManager::SEND_SERVER_ID] = "SEND_SERVER_ID";
-		id2str[AbstractMessageManager::GET_LISTEN_PORT] = "GET_LISTEN_PORT";
-		id2str[AbstractMessageManager::SEND_LISTEN_PORT] = "SEND_LISTEN_PORT";
-		id2str[AbstractMessageManager::GET_SERVER_AES_KEY] = "GET_SERVER_AES_KEY";
-		id2str[AbstractMessageManager::SEND_SERVER_AES_KEY] = "SEND_SERVER_AES_KEY";
-		id2str[AbstractMessageManager::GET_SERVER_LIST] = "GET_SERVER_LIST";
-		id2str[AbstractMessageManager::SEND_SERVER_LIST] = "SEND_SERVER_LIST";
-		id2str[AbstractMessageManager::GET_SERVER_PUBLIC_KEY] = "GET_SERVER_PUBLIC_KEY";
-		id2str[AbstractMessageManager::SEND_SERVER_PUBLIC_KEY] = "SEND_SERVER_PUBLIC_KEY";
-		id2str[AbstractMessageManager::GET_VERIFY_IDENTITY] = "GET_VERIFY_IDENTITY";
-		id2str[AbstractMessageManager::SEND_VERIFY_IDENTITY] = "SEND_VERIFY_IDENTITY";
-		id2str[AbstractMessageManager::PRIORITY_CLEAR] = "PRIORITY_CLEAR";
-		id2str[AbstractMessageManager::LAST_UNENCODED_MESSAGE] = "LAST_UNENCODED_MESSAGE";
+		id2str[*UnnencryptedMessageType::CONNECTION_CLOSED] = "CONNECTION_CLOSED";
+		id2str[*UnnencryptedMessageType::GET_SERVER_ID] = "GET_SERVER_ID";
+		id2str[*UnnencryptedMessageType::SEND_SERVER_ID] = "SEND_SERVER_ID";
+		id2str[*UnnencryptedMessageType::GET_SERVER_AES_KEY] = "GET_SERVER_AES_KEY";
+		id2str[*UnnencryptedMessageType::SEND_SERVER_AES_KEY] = "SEND_SERVER_AES_KEY";
+		id2str[*UnnencryptedMessageType::GET_SERVER_LIST] = "GET_SERVER_LIST";
+		id2str[*UnnencryptedMessageType::SEND_SERVER_LIST] = "SEND_SERVER_LIST";
+		id2str[*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY] = "GET_SERVER_PUBLIC_KEY";
+		id2str[*UnnencryptedMessageType::SEND_SERVER_PUBLIC_KEY] = "SEND_SERVER_PUBLIC_KEY";
+		id2str[*UnnencryptedMessageType::GET_VERIFY_IDENTITY] = "GET_VERIFY_IDENTITY";
+		id2str[*UnnencryptedMessageType::SEND_VERIFY_IDENTITY] = "SEND_VERIFY_IDENTITY";
+		id2str[*UnnencryptedMessageType::PRIORITY_CLEAR] = "PRIORITY_CLEAR";
+		id2str[*UnnencryptedMessageType::TIMER_SECOND] = "TIMER_SECOND";
+		id2str[*UnnencryptedMessageType::TIMER_MINUTE] = "TIMER_MINUTE";
+		id2str[*UnnencryptedMessageType::FIRST_ENCODED_MESSAGE] = "FIRST_ENCODED_MESSAGE";
 	}
 	std::string messageId_to_string(uint8_t type) {
-		if (id2str[AbstractMessageManager::GET_SERVER_ID].empty()) {
+		if (id2str[*UnnencryptedMessageType::GET_SERVER_ID].empty()) {
 			init_id2str();
 		}
 		return id2str[type];
 	}
 
 	std::mutex stdout_mutex;
-	void error(std::string str) { std::lock_guard lock(stdout_mutex);  std::cerr << str; if(str[str.size()-1] != '\n') std::cerr << "\n"; }
-	void msg(std::string str) { std::lock_guard lock(stdout_mutex); std::cout << str; if (str[str.size() - 1] != '\n') std::cout << "\n"; }
+	void error(std::string str) { 
+		std::lock_guard lock(stdout_mutex);  
+		std::cerr << str; 
+		if(str[str.size()-1] != '\n') std::cerr << "\n"; 
+	}
+	void msg(std::string str) { 
+		std::lock_guard lock(stdout_mutex); 
+		std::cout << str; 
+		if (str[str.size() - 1] != '\n') std::cout << "\n"; 
+	}
 #if _DEBUG
 	void log(std::string str) { std::lock_guard lock(stdout_mutex); std::cout << str; if (str[str.size() - 1] != '\n') std::cout << "\n"; }
 #else
 	void log(std::string str) {}
 #endif
+
+
+	// RANDOM=============================
+
+		// https://stackoverflow.com/questions/5008804/generating-a-random-integer-from-a-range
+	std::random_device rd;     // Only used once to initialise (seed) engine
+	std::mt19937 rng(rd());    // Random-number engine used (Mersenne-Twister in this case)
+	std::uniform_int_distribution<uint64_t> uni_u63(0, uint64_t(std::numeric_limits<int64_t>::max())); // Guaranteed unbiased
+	std::uniform_int_distribution<uint16_t> uni_u16(0, std::numeric_limits<uint16_t>::max()); // Guaranteed unbiased
+	std::uniform_int_distribution<uint16_t> uni_u8(0, std::numeric_limits<uint8_t>::max()); // Guaranteed unbiased
+	uint64_t rand_u63() {
+		return uni_u63(rng);
+	}
+	uint16_t rand_u16() {
+		return uni_u16(rng);
+	}
+	uint8_t rand_u8() {
+		return uint8_t(uni_u8(rng));
+	}
+
+
+	///END RANDOM=========================
 
 	//inline void  compareDirect(const std::string& fileName, int min, int max) {
 

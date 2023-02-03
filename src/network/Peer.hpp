@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <boost/asio.hpp>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 
@@ -23,18 +24,9 @@ namespace supercloud {
 	 * @author Admin
 	 *
 	 */
-	class Peer {
+	class Peer : public std::enable_shared_from_this<Peer> {
 
 	public:
-		enum PeerConnectionState : uint8_t {
-			DEAD = (0),
-			JUST_BORN = (1),
-			HAS_ID = (2),
-			HAS_PUBLIC_KEY = (3),
-			HAS_VERIFIED_COMPUTER_ID = (4),
-			CONNECTED_W_AES = (5),
-
-		};
 
 		class PeerKey {
 		private:
@@ -98,20 +90,12 @@ namespace supercloud {
 
 		};
 
-		//@Override
-		//	public boolean equals(Object arg0) {
-		//	if (arg0 instanceof Peer) {
-		//		Peer o = (Peer)arg0;
-		//		return o.myKey.address.equals(myKey.address) && o.myKey.otherPeerId == myKey.otherPeerId
-		//			&& o.myKey.port == myKey.port;
-		//	}
-		//	return false;
-		//}
-
-		//@Override
-		//	public int hashCode() {
-		//	return myKey.hashCode();
-		//}
+		enum CloseReason {
+			ALIVE,
+			BAD_SERVER_ID,
+			BAD_COMPUTER_ID,
+			NETWORK_FAIL,
+		};
 
 	private:
 		PhysicalServer& myServer;
@@ -125,10 +109,23 @@ namespace supercloud {
 		std::mutex socket_read_write_mutex;
 		//std::unique_ptr<std::ostream> streamOut;
 
+		/// <summary>
+		/// At least one thread is listening to the socket.
+		/// </summary>
 		std::atomic<bool> alive = false;
+
+		/// <summary>
+		/// At least a connection has receive a first message. Used when two connection were establish to the same peer, can happen if the two computer connect to each other at the same time.
+		/// </summary>
 		std::atomic<bool> aliveAndSet = false;
+
+		/// <summary>
+		/// reconnect fail counter
+		/// </summary>
 		int aliveFail = 0;
+
 		std::shared_ptr<tcp::socket> sockWaitToDelete = nullptr;
+		CloseReason close_reason = CloseReason::ALIVE;
 
 		std::atomic<bool> is_thread_running = false;
 		//Thread myCurrentThread = null;
@@ -149,22 +146,23 @@ namespace supercloud {
 		//Cipher decoder = null;
 
 	protected:
-		//my state, i added this after the dev of this class, so it's spartly used/updated for the dead/born/hasid state, need some debug to be barely reliable.
-		// used mainly to see if HAS_PUBLIC_KEY, HAS_VERIFIED_COMPUTER_ID, CONNECTED_W_AES is done.
-		PeerConnectionState myState = PeerConnectionState::DEAD;
+
+		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port) : myServer(physicalServer), myKey(PeerKey{ inetAddress, port }), createdAt(get_current_time_milis()) {}
 
 	public:
 		const int64_t createdAt;
 
-		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port) : myServer(physicalServer), myKey(PeerKey{ inetAddress, port }), createdAt(get_current_time_milis()) {}
+		//factory
+		[[nodiscard]] static PeerPtr create(PhysicalServer& physicalServer, const std::string& inetAddress, int port) {
+			// Not using std::make_shared<Best> because the c'tor is private.
+			return std::shared_ptr<Peer>(new Peer(physicalServer, inetAddress, port));
+		}
 
-		// write only
-		/**
-		 * update connection status.
-		 * @return true if you should call ping quickly afterwards (connection phase)
-		 */
-		bool ping();
-		// receive only (read)
+		PeerPtr ptr() {
+			return shared_from_this();
+		}
+
+		// read main infinite loop, that may propagate message to listener and they can write stuff.
 		void run();
 
 		void reconnect();
@@ -211,7 +209,7 @@ namespace supercloud {
 			return alive.load();
 		}
 
-		void setPort(int port) {
+		void setPort(uint16_t port) {
 			if (myKey.getPort() != port) {
 				myKey.setPort(port);
 			}
@@ -230,29 +228,6 @@ namespace supercloud {
 		uint16_t getComputerId() const {
 			return distComputerId;
 		}
-
-		void flush() {
-			//getOut().flush();
-			//TODO
-		}
-
-		void changeState(PeerConnectionState newState, bool changeOnlyIfHigher) {
-			//synchronized(myState) {
-				if (!changeOnlyIfHigher || myState < newState)
-					myState = newState;
-			//}
-
-		}
-
-		bool hasState(PeerConnectionState stateToVerify) const {
-			return myState >= stateToVerify; //!myState.lowerThan(stateToVerify);
-		}
-
-		PeerConnectionState getState() const {
-			return myState;
-		}
-
-
 
 	};
 

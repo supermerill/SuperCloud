@@ -11,70 +11,6 @@
 
 namespace supercloud {
 
-
-	// write only
-	/**
-	 * update connection status.
-	 * @return true if you should call ping quickly afterwards (connection phase)
-	 */
-	bool Peer::ping() {
-		log( std::string("peer ") + this->myKey.getPeerId() + " compId:" + this->distComputerId + " : is alive? " + this->alive.load());
-		if (!this->alive.load())
-			return false;
-		try {
-
-			if (myKey.getPort() <= 0) {
-				this->writeMessage(AbstractMessageManager::GET_LISTEN_PORT, nullmsg);
-				// GetListenPort.get().write(getOut(), this);
-				// getOut().flush();
-			}
-			if (myKey.getPeerId() == 0 || myState < PeerConnectionState::HAS_ID) {
-				this->writeMessage(AbstractMessageManager::GET_SERVER_ID, nullmsg);
-				// GetServerId.get().write(getOut(), this);
-				// getOut().flush();
-				return true;
-			}
-
-			// get the server list of the other one every 10-15 min.
-//			this->writeMessage(AbstractMessageManager::GET_SERVER_LIST, nullmsg);
-			if (nextTimeSearchMoreServers < get_current_time_milis()) {
-				if (nextTimeSearchMoreServers == 0) {
-					nextTimeSearchMoreServers = get_current_time_milis() + 1000;
-				} else {
-					nextTimeSearchMoreServers = get_current_time_milis()
-						+ 1000 * 60 * (10 + rand_char()%10); // +10-19min
-				// }
-					this->writeMessage(AbstractMessageManager::GET_SERVER_LIST, nullmsg);
-					// GetServerList.get().write(getOut(), this);
-					// getOut().flush();
-				}
-
-			}
-
-			if (myState < PeerConnectionState::HAS_PUBLIC_KEY) {
-				myServer.getServerIdDb().requestPublicKey(*this);
-				return true;
-			}
-
-			if (myState < PeerConnectionState::HAS_VERIFIED_COMPUTER_ID) {
-				myServer.getServerIdDb().sendIdentity(*this, myServer.getServerIdDb().createMessageForIdentityCheck(*this, false), true);
-				return true;
-			}
-
-			if (myState < PeerConnectionState::CONNECTED_W_AES) {
-				myServer.getServerIdDb().requestSecretKey(*this);
-				return true;
-			}
-
-
-			return false;
-		}
-		catch (std::exception e) {
-			std::cerr << "ERROR: " << e.what() << "\n";
-			return false;
-		}
-	}
-
 	// receive only (read)
 	void Peer::run() {
 		//myCurrentThread = Thread.currentThread();
@@ -123,28 +59,18 @@ namespace supercloud {
 		//}
 		//myCurrentThread = nullptr;
 		is_thread_running.store(false);
-		changeState(PeerConnectionState::DEAD, false);
 
-		if (alive.load()) {
-			aliveAndSet.store(false);
-			aliveFail = 0;
-			alive.store(false);
-			// reconnect();
-		}
-		// else, it's a kill from someone else who doesn't want me
+		//TODO: try to reconnect instead of closing it for good.
+		//if (alive.exchange(false)) {
+		//	//not closed(), so we can try to reconnect it
+		//	aliveAndSet.store(false);
+		//	aliveFail = 0;
+		//	 reconnect();
+		//} // else, it's a kill from someone else who doesn't want me
+		//
+		close();
 
 	}
-
-	//class mysocket : public tcp::socket {
-	//public:
-	//	mysocket(boost::asio::io_service& context) : tcp::socket(context) {}
-	//	virtual ~mysocket() {
-	//		std::cout << "destroying the socket\n";
-	//	}
-	//	void close() override {
-	//		tcp::socket::close(
-	//	}
-	//};
 
 	void Peer::reconnect() {
 		if (myKey.getAddress() == "" || myKey.getPort() == uint16_t(-1)) {
@@ -227,31 +153,17 @@ namespace supercloud {
 			// connect
 			this->socket = sock;
 
-			// get the sockId;
-			// MessageId.use[MessageId.SET_SERVER_ID.id].emit(tempStreamOut, );
-			// SetServerId.get().write(myServer.getId(), streamOut);
-			changeState(PeerConnectionState::JUST_BORN, true);
+			//Send the first message. SHould start the connection pipeline via the ConnectionMessageManager
+			// began directly by sending the id, instead of asking for it first.
 			myServer.message().sendServerId(*this);
-			// MyListenPort.get().write(this);
-			myServer.message().sendListenPort(*this);
-			myServer.getServerIdDb().requestPublicKey(*this);
-			//streamOut.flush();
 
-			boost::asio::socket_base::bytes_readable command(true);
-			sock->io_control(command);
-			std::size_t bytes_readable = command.get();
-
-			log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " can read " + bytes_readable);
+			// read sendServerId from the other peer
 			readMessage();
-			//log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " read id "
-			//		+ getKey().getPeerId() + "("+(getKey().getPeerId()%100)+")");
 
-			readMessage();
-			//log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " read port " + getKey().getPort());
-
+			// set that we are in connection
 			aliveAndSet.store(true);
-			log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " succeed to connect to "
-					+ sock->remote_endpoint().port());
+			//log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " succeed to connect to "
+			//		+ sock->remote_endpoint().port());
 			return true;
 		}
 	}
@@ -275,9 +187,9 @@ namespace supercloud {
 	//TODO: write a branch to allow the read() to read that.
 	//synchronized
 	void Peer::writeMessagePriorityClear(uint8_t messageId, ByteBuff& message) {
-		if (message.limit() == 0) {
-			log(std::string("Warn : emit null message, id :") + int32_t(messageId)+" : "+messageId_to_string(messageId));
-		}
+		//if (message.limit() == 0) {
+		//	log(std::string("Warn : emit null message, id :") + int32_t(messageId)+" : "+messageId_to_string(messageId));
+		//}
 
 		size_t encodedMsgLength = message.limit() - message.position();
 
@@ -286,11 +198,11 @@ namespace supercloud {
 			.put(uint8_t(5))
 			.put(uint8_t(5))
 			.put(uint8_t(5))
-			.put(AbstractMessageManager::PRIORITY_CLEAR)
-			.put(AbstractMessageManager::PRIORITY_CLEAR)
+			.put(*UnnencryptedMessageType::PRIORITY_CLEAR)
+			.put(*UnnencryptedMessageType::PRIORITY_CLEAR)
 			.put(messageId);
-		fullData.putInt(encodedMsgLength + 1)
-			.putInt(encodedMsgLength + 1);
+		fullData.putInt(int32_t(encodedMsgLength + 1))
+			.putInt(int32_t(encodedMsgLength + 1));
 		fullData.put(message);
 		fullData.flip();
 		log(std::to_string( this->myServer.getPeerId() % 100 ) + " write socket: " + socket->is_open() + "\n");
@@ -307,19 +219,21 @@ namespace supercloud {
 	//synchronized
 	void Peer::writeMessage(uint8_t messageId, ByteBuff& message) {
 
-		Sleep(1000 + this->myServer.getPeerId() % 200 + rand_char());
+#ifdef SLOW_NETWORK_FOR_DEBUG
+		Sleep(1000 + this->myServer.getPeerId() % 200 + rand_u8());
+#endif
 		
-		if (message.limit() - message.position() <= 0) {
-			msg(std::string("Warn : emit null message, id :") + int32_t(messageId) + " : " + messageId_to_string(messageId));
-		}
+		//if (message.limit() - message.position() <= 0) {
+		//	msg(std::string("Warn : emit null message, id :") + int32_t(messageId) + " : " + messageId_to_string(messageId));
+		//}
 		//try {
 
 			//encode mesage
 			//if (encoder == null) encoder = myServer.getServerIdDb().getSecretCipher(this, Cipher.ENCRYPT_MODE);
 			uint8_t* encodedMsg = nullptr;
 			size_t encodedMsgLength = 0;
-			if (messageId > AbstractMessageManager::LAST_UNENCODED_MESSAGE) {
-				if (hasState(PeerConnectionState::CONNECTED_W_AES)) {
+			if (messageId > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
+				if (myServer.getServerIdDb().has_aes(*this)) {
 					if (message.limit() - message.position() > 0) {
 						//encodedMsg = encoder.doFinal(message.array(), message.position(), message.limit());
 						// TODO: naive cipher: xor with a passphrase
@@ -346,8 +260,8 @@ namespace supercloud {
 				.put(uint8_t(5))
 				.put(messageId)
 				.put(messageId);
-			fullData.putInt(encodedMsgLength)
-				.putInt(encodedMsgLength);
+			fullData.putInt(int32_t(encodedMsgLength))
+				.putInt(int32_t(encodedMsgLength));
 			if (encodedMsgLength > 0) {
 				fullData.put(encodedMsg, encodedMsgLength);
 			}
@@ -362,7 +276,8 @@ namespace supercloud {
 			if (error_write) {
 				error(std::string("Error when writing :") + error_write.value() + " " + error_write.message());
 			}
-			log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) + " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.limit() - message.position())));
+			log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) 
+				+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.limit() - message.position())));
 		//}
 		//catch (std::exception e) {
 		//	std::cerr << std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100)<<  " ERROR: " << e.what() << "\n";
@@ -371,7 +286,10 @@ namespace supercloud {
 	}
 
 	void Peer::readMessage() {
-		Sleep(100 + this->myServer.getPeerId() % 20 + rand_char()%100);
+		if (!this->alive) { return; }
+#ifdef SLOW_NETWORK_FOR_DEBUG
+		Sleep(100 + this->myServer.getPeerId() % 20 + rand_u8()%100);
+#endif
 		try {
 			boost::system::error_code error_code;
 			// go to a pos where there are the two byte [5,5]
@@ -394,6 +312,7 @@ namespace supercloud {
 					nb5 = 0;
 					error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + (" stream error: receive ") + newByte + " instead of 5  ,peerid=" + getKey().getPeerId() % 100);
 				}
+				if (!this->alive) { return; }
 			} while (nb5 < 4);
 
 			// read messagetype
@@ -401,6 +320,7 @@ namespace supercloud {
 			uint8_t sameByte;
 			{ std::lock_guard lock_socket{ socket_read_write_mutex };
 				bytesRead = boost::asio::read(*socket, boost::asio::buffer(&newByte, 1), error_code);
+				if (!this->alive) { return; }
 				bytesRead = boost::asio::read(*socket, boost::asio::buffer(&sameByte, 1), error_code);
 			}
 			if (sameByte != newByte) {
@@ -411,6 +331,7 @@ namespace supercloud {
 			if (bytesRead < 1 || error_code == boost::asio::error::eof) {
 				throw std::runtime_error("End of stream");
 			}
+			if (!this->alive) { return; }
 			if (newByte >50) {
 				log(std::string("error, receive byte: ") + newByte);
 				return;
@@ -421,6 +342,7 @@ namespace supercloud {
 				//streamIn->read((char*)buffIn.raw_array(), 8);
 				{ std::lock_guard lock_socket{ socket_read_write_mutex };
 					bytesRead = boost::asio::read(*socket, boost::asio::buffer(buffIn.raw_array(), 8), error_code);
+					if (!this->alive) { return; }
 				}
 				int nbBytes = buffIn.getInt();
 				int nbBytes2 = buffIn.getInt();
@@ -449,14 +371,15 @@ namespace supercloud {
 						if (error_code) {
 							error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " Error: with code "+ error_code.value()+" => "+ error_code.message());
 						}
+						if (!this->alive) { return; }
 					}
 				}
 				//decode mesage
 				//if (decoder == nullptr) decoder = myServer.getServerIdDb().getSecretCipher(this, Cipher.DECRYPT_MODE);
 				uint8_t* decodedMsg = nullptr;
 				size_t decodedMsgLength = 0;
-				if (newByte > AbstractMessageManager::LAST_UNENCODED_MESSAGE) {
-					if (hasState(PeerConnectionState::CONNECTED_W_AES)) {
+				if (newByte > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
+					if (myServer.getServerIdDb().has_aes(*this)) {
 						if (buffIn.position() < buffIn.limit() && nbBytes > 0 && buffIn.limit() - buffIn.position() > 0) {
 							//decodedMsg = decoder.doFinal(buffIn.raw_array(), buffIn.position(), buffIn.limit());
 							// TODO: naive xor
@@ -470,47 +393,14 @@ namespace supercloud {
 				}//else : nothing to do, it's not encoded
 				log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " Read message " + int32_t(newByte)+" : " + messageId_to_string(newByte));
 				//use message
-				if (newByte == AbstractMessageManager::GET_SERVER_ID) {
-					// special case, give the peer object directly.
-					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "read GET_SERVER_ID : now sending my peerId");
-					myServer.message().sendServerId(*this);
-				}
-				if (newByte == AbstractMessageManager::SEND_SERVER_ID) {
-					// special case, give the peer object directly.
-					setPeerId(buffIn.getLong());
-					//check if the cluster is ok
-					uint64_t clusterId = uint64_t(buffIn.getLong());
-					if (clusterId > 0 && myServer.getServerIdDb().getClusterId() < 0) {
-						//set our cluster id
-//						myServer.getServerIdDb().setClusterId(clusterId);
-						throw std::runtime_error("Error, we haven't a clusterid !! Can we pick one from an existing network? : not anymore!");
-						//						changeState(PeerConnectionState::HAS_ID, true);
-					} else if (clusterId > 0 && myServer.getServerIdDb().getClusterId() != clusterId) {
-						//error, not my cluster!
-						std::cerr<< std::to_string(myServer.getPeerId() % 100) <<" Error, trying to connect with " << getPeerId() % 100 << " but his cluster is " << clusterId << " and mine is "
-							<< myServer.getServerIdDb().getClusterId() << " => closing connection\n";
-						this->close();
-					} else {
-						log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "read SEND_SERVER_ID : get their id: "+getPeerId());
-					}
-				}
-				if (newByte == AbstractMessageManager::GET_LISTEN_PORT) {
-					// special case, give the peer object directly.
-					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "read GET_LISTEN_PORT : now sending my port");
-					myServer.message().sendListenPort(*this);
-				}
-				if (newByte == AbstractMessageManager::SEND_LISTEN_PORT) {
-					// special case, give the peer object directly.
-					setPort(buffIn.getInt());
-					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "read SEND_LISTEN_PORT : get the distant port: "+getPort());
-				}
-				if (newByte == AbstractMessageManager::PRIORITY_CLEAR) {
+				if (newByte == *UnnencryptedMessageType::PRIORITY_CLEAR) {
 					newByte = buffIn.get();
-					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "read PRIORITY_CLEAR : "+ int32_t(newByte) + " : " + messageId_to_string(newByte));
+					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " read PRIORITY_CLEAR : "+ int32_t(newByte) + " : " + messageId_to_string(newByte));
 				}
+				if (!this->alive) { return; }
 
 				// standard case, give the peer id. Our physical server should be able to retrieve us.
-				myServer.propagateMessage(getPeerId(), (uint8_t)newByte, buffIn);
+				myServer.propagateMessage(this->ptr(), (uint8_t)newByte, buffIn);
 
 			}
 			catch (std::exception e) {
@@ -528,8 +418,15 @@ namespace supercloud {
 	void Peer::close() {
 		log(std::string("Closing ") + getKey().getPeerId() % 100);
 		//log(std::to_string(Thread.getAllStackTraces().get(Thread.currentThread())));
-		alive.store(false);
-		changeState(PeerConnectionState::DEAD, false);
+		//set as not alive
+		bool was_alive = alive.exchange(false);
+		aliveAndSet.store(false);
+		// notify the listener that this connection is lost.
+		// (so they still have a chance to emit a last message before closure) 
+		if (was_alive) {
+			this->myServer.propagateMessage(this->ptr(), *UnnencryptedMessageType::CONNECTION_CLOSED, ByteBuff{});
+		}
+		//close the socket
 		try {
 			if (sockWaitToDelete && sockWaitToDelete->is_open()) {
 				sockWaitToDelete->shutdown(tcp::socket::shutdown_both);

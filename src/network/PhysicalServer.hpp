@@ -47,7 +47,7 @@ namespace supercloud {
     class PhysicalServer : public ConnectionMessageManagerServerInterface {
     public:
 
-        enum ServerConnectionState : uint8_t {
+        enum class ServerConnectionState : uint8_t {
             JUST_BORN,
             CONNECTING,
             CONNECTED,
@@ -58,7 +58,8 @@ namespace supercloud {
         };
 
     protected:
-        uint64_t myPeerId;
+        uint64_t myPeerId = NO_PEER_ID;
+        bool has_peer_id = false;
 
         ServerConnectionState myInformalState = ServerConnectionState::JUST_BORN;
 
@@ -80,11 +81,14 @@ namespace supercloud {
         std::shared_ptr<ConnectionMessageManager> messageManager;
 
         // each messageid has its vector of listeners 
-        std::vector<std::shared_ptr<AbstractMessageManager>> listeners[256];
+        std::map<uint8_t, std::vector<std::shared_ptr<AbstractMessageManager>>> listeners;
 
         //std::string jarFolder = "./jars";
 
         uint64_t lastDirUpdate = 0;
+
+        // for update() method
+        int64_t last_minute_update = 0;
 
         PhysicalServer() {
             messageManager = (ConnectionMessageManager::create(*this));
@@ -109,6 +113,10 @@ namespace supercloud {
 
         uint64_t getPeerId() override {
             return myPeerId;
+        }
+        void setPeerId(uint64_t new_peer_id) override;
+        bool hasPeerId() override {
+            return has_peer_id && myPeerId != 0 && myPeerId != NO_PEER_ID;
         }
 
         uint16_t getComputerId() override;
@@ -180,7 +188,6 @@ namespace supercloud {
 
         FileSystemManager* getFileSystem();
 
-        bool rechooseId();
 
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -232,7 +239,7 @@ namespace supercloud {
 
         void registerListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener);
 
-        void propagateMessage(uint64_t senderId, uint8_t messageId, ByteBuff& message);
+        void propagateMessage(PeerPtr sender, uint8_t messageId, ByteBuff& message);
 
         ConnectionMessageManager& message();
 
@@ -240,9 +247,8 @@ namespace supercloud {
 
         bool connect(const std::string& path, uint16_t port);
 
-        ServerIdDb& getServerIdDb() override;
 
-        void chooseComputerId() override;
+        ServerIdDb& getServerIdDb() override;
 
         void initializeNewCluster() override;
 
@@ -251,6 +257,11 @@ namespace supercloud {
         uint64_t getPeerIdFromCompId(uint16_t compId) override;
 
         int connect() override;
+
+        /// <summary>
+        /// Close current connections (peers) and try to reconnect them
+        /// </summary>
+        bool reconnect() override;
 
         size_t getNbPeers() override;
 
