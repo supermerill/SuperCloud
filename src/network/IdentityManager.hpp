@@ -25,8 +25,25 @@ class PhysicalServer;
 	 * This class if the manager of the peers we kind of trust in the network.
 	 * It store the list of them, and their keys, and some method to identify them.
 	 */
-class ServerIdDb {
+class IdentityManager {
 public:
+	struct PeerConnection {
+		std::string address;
+		uint16_t port;
+		bool first_hand_information;
+		bool intitiated_by_me;
+		bool operator==(const PeerConnection& other) const { return address == other.address && port == other.port && first_hand_information == other.first_hand_information && intitiated_by_me == other.intitiated_by_me; }
+	};
+	struct PeerData {
+		PublicKey rsa_public_key;
+		SecretKey aes_key;
+		// The key is an ip (only the network part) and the value is the ip/adress where we succeffuly connect to it.
+		// If we never found a way to connect to it, it's empty.
+		std::map<std::string, std::vector<PeerConnection>> net2validAddress;
+		// the registered peer. may be in connection?
+		PeerPtr peer;
+		bool operator==(const PeerData& other) const { return peer == other.peer && rsa_public_key == other.rsa_public_key && aes_key == other.aes_key && net2validAddress == other.net2validAddress; }
+	};
 	enum ComputerIdState : uint8_t {
 		NOT_CHOOSEN = 0,
 		TEMPORARY = 1,
@@ -38,16 +55,13 @@ protected:
 	PrivateKey privateKey;
 	PublicKey publicKey;
 
-	std::vector<PeerPtr> receivedServerList;
-	std::mutex registeredPeers_mutex;
-	std::vector<PeerPtr> registeredPeers;
+	//database peers
+	mutable std::mutex loadedPeers_mutex;
 	std::vector<PeerPtr> loadedPeers;
-	std::mutex tempPubKey_mutex;
+	mutable std::mutex tempPubKey_mutex;
 	std::unordered_map<uint64_t, PublicKey> tempPubKey; // unidentified pub key
-	std::mutex id2PublicKey_mutex;
-	std::unordered_map<uint16_t, PublicKey> id2PublicKey; // identified pub key
-	std::mutex id2AesKey_mutex;
-	std::unordered_map<uint16_t, SecretKey> id2AesKey;
+	mutable std::mutex peer_data_mutex;
+	std::unordered_map<uint16_t, PeerData> id_2_peerdata;
 	PhysicalServer& serv;
 
 	ComputerIdState myComputerIdState = ComputerIdState::NOT_CHOOSEN;
@@ -55,52 +69,50 @@ protected:
 	int64_t timeChooseId = 0;
 
 	std::unordered_map<uint64_t, std::string> peerId2emittedMsg;
-	std::mutex save_mutex;
+	mutable std::mutex save_mutex;
 	std::filesystem::path filepath;
 	uint64_t clusterId = NO_CLUSTER_ID; // the id to identify the whole cluster
 	std::string passphrase = "no protection"; //the passphrase of the cluster
 
-
+	void create_from_install_file(const std::filesystem::path& currrent_filepath);
 public:
-	ServerIdDb(PhysicalServer& serv, const std::filesystem::path& filePath) : serv(serv), filepath(filePath) {}
+	IdentityManager(PhysicalServer& serv, const std::filesystem::path& filePath) : serv(serv), filepath(filePath) {}
 
 	std::mutex& synchronize() { return db_file_mutex;  }
 
 	//getters
-	std::vector<PeerPtr> getRegisteredPeers() { return registeredPeers; }
-	uint64_t getClusterId() { return clusterId; }
-	ComputerIdState getComputerIdState() { return myComputerIdState; }
-	uint16_t getComputerId() { return myComputerId; }
+	uint64_t getClusterId() const { return clusterId; }
+	ComputerIdState getComputerIdState() const { return myComputerIdState; }
+	uint16_t getComputerId() const { return myComputerId; }
 	void setComputerId(uint16_t myNewComputerId, ComputerIdState newState) { myComputerId = myNewComputerId; myComputerIdState = newState; }
-	//TODO is it safe?
-	std::vector<PeerPtr>& getReceivedServerList() { return receivedServerList; }
-	std::vector<PeerPtr>& getLoadedPeers() { return loadedPeers; }
-
-	void addToReceivedServerList(PeerPtr peer) { receivedServerList.push_back(std::move(peer)); }
+	std::vector<PeerPtr> getLoadedPeers() { std::lock_guard lock{ loadedPeers_mutex };  return loadedPeers; }
 
 	uint64_t getTimeChooseId(){ return timeChooseId; }
-	PublicKey getPublicKey() { return publicKey; }
-	PublicKey getPublicKey(uint16_t key) {
-		{ std::lock_guard lock(this->id2PublicKey_mutex);
-			auto it = id2PublicKey.find(key);
-			if (it != id2PublicKey.end())
-				return it->second;
+	PublicKey getPublicKey() const { return publicKey; }
+	PublicKey getPublicKey(uint16_t key) const {
+		{ std::lock_guard lock(this->peer_data_mutex);
+			auto it = id_2_peerdata.find(key);
+			if (it != id_2_peerdata.end())
+				return it->second.rsa_public_key;
 			return PublicKey{};
 		}
 	}
 
 	//setters
 	void removeBadPeer(Peer* badPeer, uint16_t computerId) {
-		//loadedPeers.remove(badPeer); :
-		for (auto it = loadedPeers.begin(); it != loadedPeers.end(); ++it) {
-			if (it->get() == badPeer) {
-				it->get()->close();
-				loadedPeers.erase(it);
-				break;
+		{std::lock_guard lock{ loadedPeers_mutex };
+			for (auto it = loadedPeers.begin(); it != loadedPeers.end(); ++it) {
+				if (it->get() == badPeer) {
+					it->get()->close();
+					loadedPeers.erase(it);
+					break;
+				}
 			}
 		}
 		//also erase the bad computer id
-		id2PublicKey.erase(this->getComputerId());
+		{ std::lock_guard lock(this->peer_data_mutex);
+			id_2_peerdata.erase(this->getComputerId());
+		}
 	}
 
 	// create our keys
@@ -124,7 +136,10 @@ public:
 	//		System.out.println(createPrivKey(arr).getFormat());
 	//	}
 
-
+	//fusion (or add) a connected peer to our lists 
+	void fusionWithConnectedPeer(PeerPtr peer);
+	// add an unconnected peer to our list of possible peers.
+	void addNewPeer(uint16_t computerId, const PeerData& data);
 
 	//request->send->receive a public key from a peer
 	//void requestPublicKey(Peer& peer);
@@ -146,20 +161,14 @@ public:
 	//can't be const because of the mutex
 	void requestSave();
 
-	bool has_aes(const Peer& p);
 	//public Cipher getSecretCipher(Peer p, int mode);
 
 	//ByteBuff blockCipher(byte[] bytes, int mode, Cipher cipher);
 
-
-	bool isChoosen(uint16_t choosenId) {
-		if (this->id2PublicKey.find(choosenId) != id2PublicKey.end()) {
-			return true;
-		}
-		return false;
-	}
-
 	void requestSecretKey(Peer& peer);
+
+	PeerData getPeerData(uint16_t computer_id) const;
+	bool setPeerData(const PeerData& original, const PeerData& new_data);
 
 public:
 	static inline const uint8_t AES_PROPOSAL = 0; // i propose this (maybe you will not accept it)
@@ -173,15 +182,8 @@ public:
 
 	void sendAesKey(Peer& peer, uint8_t aesState);
 
-	void receiveAesKey(Peer& peer, ByteBuff& message);
+	bool receiveAesKey(Peer& peer, ByteBuff& message);
 
-
-	/**
-		* Add a computer id to the list of known computerid. This is maintained up-to-date to let other know what id is not available.
-		* But these are not saved as they are not registered (no verified public keys). => it's half-assed we should just trash them if they are not verified ?
-		* @param computerId some computerId, maybe already stored or just plain wrong.
-		*/
-	void addPeer(uint16_t computerId);
 };
 
 } // namespace supercloud

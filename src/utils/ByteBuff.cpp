@@ -207,11 +207,26 @@ uint8_t* ByteBuff::raw_array()
 int16_t ByteBuff::getShort()
 {
     this->readcheck(2);
-    const short sh = (short)((this->m_buffer[this->m_position++] & 0xFF) << 8 | this->m_buffer[this->m_position++] & 0xFF);
+    const short sh = (int16_t)((this->m_buffer[this->m_position++] & 0xFF) << 8 | this->m_buffer[this->m_position++] & 0xFF);
     return sh;
 }
 
 ByteBuff& ByteBuff::putShort(const int16_t value)
+{
+    expand(2);
+    this->m_buffer[this->m_position++] = (uint8_t)((value & 0xFF00) >> 8);
+    this->m_buffer[this->m_position++] = (uint8_t)(value & 0xFF);
+    return *this;
+}
+
+uint16_t ByteBuff::getUShort()
+{
+    this->readcheck(2);
+    const short sh = uint16_t((this->m_buffer[this->m_position++] & 0xFF) << 8 | this->m_buffer[this->m_position++] & 0xFF);
+    return sh;
+}
+
+ByteBuff& ByteBuff::putUShort(const uint16_t value)
 {
     expand(2);
     this->m_buffer[this->m_position++] = (uint8_t)((value & 0xFF00) >> 8);

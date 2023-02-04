@@ -10,12 +10,13 @@
 #include "Peer.hpp"
 
 namespace supercloud {
+	class IdentityManager;
+
 	enum class UnnencryptedMessageType : uint8_t {
 		/// <summary>
-		/// Fake message to notify listener for closing the socket.
-		/// The reason can be get from the peer object
+		/// nothing
 		/// </summary>
-		CONNECTION_CLOSED,
+		NO_MESSAGE,
 		/// <summary>
 		/// get the distant server ids (and port)
 		/// </summary>
@@ -64,6 +65,15 @@ namespace supercloud {
 		/// </summary>
 		PRIORITY_CLEAR,
 		/// <summary>
+		/// Fake message when a successful connection is established with a new peer.
+		/// </summary>
+		NEW_CONNECTION,
+		/// <summary>
+		/// Fake message to notify listener for closing the socket / a connection with a peer.
+		/// The reason can be get from the peer object
+		/// </summary>
+		CONNECTION_CLOSED,
+		/// <summary>
 		/// Fake message to notify the listeners every second, from the CLusterManager/PhysicalServer update thread.
 		/// The message contains the current time milis
 		/// </summary>
@@ -76,7 +86,16 @@ namespace supercloud {
 		/// <summary>
 		/// If the Id of the message is at least this number, then it's an encrypted message.
 		/// </summary>
-		FIRST_ENCODED_MESSAGE = 100,
+		FIRST_ENCODED_MESSAGE = 20,
+
+		/// <summary>
+		/// REquest to get the peer database of the peers it encountered, to enrich ours.
+		/// </summary>
+		GET_SERVER_DATABASE,
+		/// <summary>
+		/// The peer's database of its peers
+		/// </summary>
+		SEND_SERVER_DATABASE,
 	};
 	constexpr auto operator*(UnnencryptedMessageType emt) noexcept{return static_cast<uint8_t>(emt);}
 
@@ -119,7 +138,8 @@ namespace supercloud {
 		 * Get the number of peers with which i can communicate.
 		 * @return number of connected peers at this moment.
 		 */
-		virtual size_t getNbPeers() = 0;
+		virtual size_t getNbPeers() const = 0;
+		virtual PeerList getPeersCopy() const = 0;
 
 		/**
 		 * Try to connect to a new peer at this address/port
@@ -127,14 +147,13 @@ namespace supercloud {
 		 * @param port port
 		 * @return true if it's maybe connected, false if it's maybe not connected
 		 */
-		virtual bool connect(const std::string& string, uint16_t port) = 0;
-		/**
-		 *
-		 * @param ip address
-		 * @param port port
-		 * @return number of connected peer (approximation).
-		 */
-		virtual int32_t connect() = 0;
+		virtual void connect(const std::string& string, uint16_t port) = 0;
+		
+		/// <summary>
+		/// Try to connect all peers in our database, in an async way
+		/// </summary>
+		/// <returns></returns>
+		virtual void connect() = 0;
 		virtual bool reconnect() = 0;
 
 		/**
@@ -142,7 +161,7 @@ namespace supercloud {
 		 */
 		virtual void close() = 0;
 
-		virtual uint16_t getComputerId() = 0;
+		virtual uint16_t getComputerId() const = 0;
 		virtual void launchUpdater() = 0;
 		virtual void initializeNewCluster() = 0;
 
@@ -151,15 +170,15 @@ namespace supercloud {
 		 * @param senderId the peerId (what we receive from the net message)
 		 * @return  the computerid or -1 if it's not connected (yet).
 		 */
-		virtual uint16_t getComputerId(uint64_t senderId) = 0; //get a computerId from a peerId (senderId)
-		virtual uint64_t getPeerIdFromCompId(uint16_t compId) = 0; //get a peerId (senderId) from a computerId
+		virtual uint16_t getComputerId(uint64_t senderId) const = 0; //get a computerId from a peerId (senderId)
+		virtual uint64_t getPeerIdFromCompId(uint16_t compId) const = 0; //get a peerId (senderId) from a computerId
 
 		virtual boost::asio::ip::tcp::endpoint getListening() = 0;
-		/**
-		 *
-		 * @return true if the net is currently connecting to the cluster
-		 */
-		virtual bool isConnecting() = 0;
+
+		virtual IdentityManager& getIdentityManager() = 0;
+
+		//for logging
+		virtual uint64_t getPeerId() const = 0;
 	};
 
 

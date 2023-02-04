@@ -1,7 +1,6 @@
 #include "ConnectionMessageManager.hpp"
-#include "ServerIdDb.hpp"
-
-#include <chrono>
+#include "IdentityManager.hpp"
+#include "PhysicalServer.hpp"
 
 namespace supercloud{
 
@@ -35,13 +34,13 @@ namespace supercloud{
             status[sender].last_request = ConnectionStep::RSA;
         }
         else if (currentStep == ConnectionStep::RSA && (enforce || status[sender].last_request != ConnectionStep::IDENTITY_VERIFIED)) {
-            ServerIdDb::Identityresult result = clusterManager.getServerIdDb().sendIdentity(*sender, clusterManager.getServerIdDb().createMessageForIdentityCheck(*sender, false), true);
-            if (result == ServerIdDb::Identityresult::NO_PUB) {
+            IdentityManager::Identityresult result = clusterManager.getIdentityManager().sendIdentity(*sender, clusterManager.getIdentityManager().createMessageForIdentityCheck(*sender, false), true);
+            if (result == IdentityManager::Identityresult::NO_PUB) {
                 sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                 status[sender].last_request = ConnectionStep::RSA;
-            } else if (result == ServerIdDb::Identityresult::BAD) {
+            } else if (result == IdentityManager::Identityresult::BAD) {
                 sender->close();
-            } else if (result == ServerIdDb::Identityresult::OK) {
+            } else if (result == IdentityManager::Identityresult::OK) {
                 status[sender].last_request = ConnectionStep::IDENTITY_VERIFIED;
             }
         }
@@ -75,15 +74,15 @@ namespace supercloud{
             //get listen port
             sender->setPort(uint16_t(message.getInt()));
             //Verify that the cluster Id is good
-            if (clusterId > 0 && clusterManager.getServerIdDb().getClusterId() < 0) {
+            if (clusterId > 0 && clusterManager.getIdentityManager().getClusterId() < 0) {
                 //set our cluster id
-//						myServer.getServerIdDb().setClusterId(clusterId);
+//						myServer.getIdentityManager().setClusterId(clusterId);
                 throw std::runtime_error("Error, we haven't a clusterid !! Can we pick one from an existing network? : not anymore!");
                 //						changeState(PeerConnectionState::HAS_ID, true);
-            } else if (clusterId > 0 && clusterManager.getServerIdDb().getClusterId() != clusterId) {
+            } else if (clusterId > 0 && clusterManager.getIdentityManager().getClusterId() != clusterId) {
                 //error, not my cluster!
                 std::cerr << std::to_string(clusterManager.getPeerId() % 100) << " Error, trying to connect with " << (sender->getPeerId() % 100) << " but his cluster is " << clusterId << " and mine is "
-                    << clusterManager.getServerIdDb().getClusterId() << " => closing connection\n";
+                    << clusterManager.getIdentityManager().getClusterId() << " => closing connection\n";
                 sender->close();
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " read SEND_SERVER_ID : get their id: " + sender->getPeerId());
@@ -97,9 +96,7 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + "he want my server list");
-                {std::lock_guard lock(this->clusterManager.getServerIdDb().synchronize());
-                    sendServerList(*sender, this->clusterManager.getServerIdDb().getRegisteredPeers(), this->clusterManager.getPeersCopy());
-                }
+                sendServerList(*sender, this->clusterManager.getIdentityManager().getLoadedPeers(), this->clusterManager.getPeersCopy());
             }
         }
         if (messageId == *UnnencryptedMessageType::SEND_SERVER_LIST) {
@@ -120,7 +117,7 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive GET_SERVER_PUBLIC_KEY");
-                clusterManager.getServerIdDb().sendPublicKey(*sender);
+                clusterManager.getIdentityManager().sendPublicKey(*sender);
             }
         }
         if (messageId == *UnnencryptedMessageType::SEND_SERVER_PUBLIC_KEY) {
@@ -128,7 +125,7 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_SERVER_PUBLIC_KEY");
-                clusterManager.getServerIdDb().receivePublicKey(*sender, message);
+                clusterManager.getIdentityManager().receivePublicKey(*sender, message);
                 if (sender->isAlive()) { status[sender].recv = std::max(status[sender].recv, ConnectionStep::RSA); }
                 //ask for next step
                 requestCurrentStep(sender, false);
@@ -139,13 +136,13 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive GET_VERIFY_IDENTITY");
-                ServerIdDb::Identityresult result = clusterManager.getServerIdDb().answerIdentity(*sender, message);
-                if (result == ServerIdDb::Identityresult::NO_PUB) {
+                IdentityManager::Identityresult result = clusterManager.getIdentityManager().answerIdentity(*sender, message);
+                if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                     status[sender].last_request = ConnectionStep::RSA;
-                } else if (result == ServerIdDb::Identityresult::BAD) {
+                } else if (result == IdentityManager::Identityresult::BAD) {
                     sender->close();
-                } else if (result == ServerIdDb::Identityresult::OK) {
+                } else if (result == IdentityManager::Identityresult::OK) {
                     if (sender->isAlive()) { status[sender].recv = std::max(status[sender].recv, ConnectionStep::IDENTITY_VERIFIED); }
                     status[sender].last_request = ConnectionStep::IDENTITY_VERIFIED;
                     // answer is sent inside the  'answerIdentity' method, as it has to reuse the decoded message content.
@@ -157,13 +154,13 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_VERIFY_IDENTITY");
-                ServerIdDb::Identityresult result = clusterManager.getServerIdDb().receiveIdentity(sender, message);
-                if (result == ServerIdDb::Identityresult::NO_PUB) {
+                IdentityManager::Identityresult result = clusterManager.getIdentityManager().receiveIdentity(sender, message);
+                if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                     status[sender].last_request = ConnectionStep::RSA;
-                } else if (result == ServerIdDb::Identityresult::BAD) {
+                } else if (result == IdentityManager::Identityresult::BAD) {
                     sender->close();
-                } else if (result == ServerIdDb::Identityresult::OK) {
+                } else if (result == IdentityManager::Identityresult::OK) {
                     if (sender->isAlive()) { status[sender].recv = std::max(status[sender].recv, ConnectionStep::IDENTITY_VERIFIED); }
                     //ask for next step
                     requestCurrentStep(sender, false);
@@ -175,7 +172,7 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive GET_SERVER_AES_KEY");
-                clusterManager.getServerIdDb().sendAesKey(*sender, ServerIdDb::AES_PROPOSAL);
+                clusterManager.getIdentityManager().sendAesKey(*sender, IdentityManager::AES_PROPOSAL);
             }
         }
         if (messageId == *UnnencryptedMessageType::SEND_SERVER_AES_KEY) {
@@ -183,62 +180,28 @@ namespace supercloud{
                 requestCurrentStep(sender);
             } else {
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_SERVER_AES_KEY");
-                clusterManager.getServerIdDb().receiveAesKey(*sender, message);
-                if (sender->isAlive()) { status[sender].recv = std::max(status[sender].recv, ConnectionStep::AES); }
+                bool valid = clusterManager.getIdentityManager().receiveAesKey(*sender, message);
+                if (valid && sender->isAlive()) { 
+                    status[sender].recv = std::max(status[sender].recv, ConnectionStep::AES);
+                    // set the connected flag.
+                    // now other manager can emit message to the peer, and be notified by timers.
+                    sender->setConnected();
+                    //notify them that it's 
+                    clusterManager.propagateMessage(sender, *UnnencryptedMessageType::NEW_CONNECTION, ByteBuff{});
+                }
             }
         }
-        //old one, to be moved somewhere else, after the connection is established
-        //if (messageId == 666/*SEND_SERVER_LIST*/) {
-        //    log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " received SEND_SERVER_LIST");
-
-        //    //			System.out.println(p.getMyServer().getId()%100+" read "+myId+" for "+p.getKey().getOtherServerId()%100);
-        //    //add this id in our list, to be sure we didn't use it and we can transmit it.
-        //    {
-        //        std::lock_guard lock(this->clusterManager.getServerIdDb().synchronize());
-        //        log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive peer computerId:  " + senderComputerId );
-        //        this->clusterManager.getServerIdDb().addPeer(senderComputerId);
-        //    }
-        //    size_t nb = message.getTrailInt();
-        //    for (int i = 0; i < nb; i++) {
-        //        long id = message.getLong();
-        //        std::string ip = message.getUTF8();
-        //        int port = message.getTrailInt();
-        //        short computerId = message.getShort();
-
-        //        //add this id in our list, to be sure we didn't use it and we can transmit it.
-        //        {
-        //            std::lock_guard lock(this->clusterManager.getServerIdDb().synchronize());
-        //            log(std::to_string(clusterManager.getPeerId() % 100) + " receive a distant computerId:  " + computerId + " of " + id % 100 );
-        //            this->clusterManager.getServerIdDb().addPeer(computerId);
-        //        }
-        //        //				System.out.println(p.getMyServer().getId()%100+" i have found "+ip+":"+ port);
-
-
-        //        //					InetSocketAddress addr = new InetSocketAddress(ip,port);
-        //        if (computerId > 0 && computerId != clusterManager.getComputerId() && computerId != senderComputerId
-        //            && id != clusterManager.getPeerId() && id != sender->getPeerId()) {
-        //            //note: connectTO can throw exception if it can't be joinable.
-        //            //new Thread(()->clusterManager.connectTo(ip, port)).start();
-        //            //std::thread t([clusterManager&, ip&, port]() { clusterManager.connectTo(ip, port); });
-        //            std::thread t([this, ip, port]() { this->clusterManager.connect(ip, port); });
-        //            t.detach();
-        //        }
-        //    }
-        //    clusterManager.getServerIdDb().addToReceivedServerList(sender);
-        //    clusterManager.chooseComputerId();
-        //}
-
     }
 
     void ConnectionMessageManager::chooseComputerId(const std::unordered_set<uint16_t>& registered_computer_id, const std::unordered_set<uint16_t>& connected_computer_id) {
-        // do not run this method in multi-thread (i use getServerIdDb() because i'm the only one to use it, to avoid possible dead sync issues)
-        //std::lock_guard choosecomplock(getServerIdDb().synchronize());
-         std::lock_guard choosecomplock(clusterManager.getServerIdDb().synchronize());
+        // do not run this method in multi-thread (i use getIdentityManager() because i'm the only one to use it, to avoid possible dead sync issues)
+        //std::lock_guard choosecomplock(getIdentityManager().synchronize());
+         std::lock_guard choosecomplock(clusterManager.getIdentityManager().synchronize());
 
         // check if we have a clusterId
-        if (clusterManager.getServerIdDb().getComputerIdState() == ServerIdDb::ComputerIdState::NOT_CHOOSEN
-            || (clusterManager.getServerIdDb().getComputerIdState() == ServerIdDb::ComputerIdState::TEMPORARY 
-                && std::find(registered_computer_id.begin(), registered_computer_id.end(), clusterManager.getServerIdDb().getComputerId()) != registered_computer_id.end())) {
+        if (clusterManager.getIdentityManager().getComputerIdState() == IdentityManager::ComputerIdState::NOT_CHOOSEN
+            || (clusterManager.getIdentityManager().getComputerIdState() == IdentityManager::ComputerIdState::TEMPORARY 
+                && std::find(registered_computer_id.begin(), registered_computer_id.end(), clusterManager.getIdentityManager().getComputerId()) != registered_computer_id.end())) {
             //choose a random one and set our to "TEMPORARY"
 
             uint16_t choosenId = rand_u16();
@@ -262,7 +225,7 @@ namespace supercloud{
                 }
             }
             if (choosenId >= std::numeric_limits<uint16_t>::max() - 2) {
-                if (clusterManager.getServerIdDb().getComputerIdState() == ServerIdDb::ComputerIdState::TEMPORARY) {
+                if (clusterManager.getIdentityManager().getComputerIdState() == IdentityManager::ComputerIdState::TEMPORARY) {
                     error(std::to_string(clusterManager.getPeerId() % 100) + " ERROR! my ComputerId is already taken, and I can't change as they are all taken.\n");
                     throw std::runtime_error("ERROR! my ComputerId is already taken, and I can't change as they are all taken.. Please destroy this instance/peer/server and reuse another one.");
                 } else {
@@ -270,7 +233,7 @@ namespace supercloud{
                     throw std::runtime_error("ERROR! no computerId left to be taken. Please reuse one instead.");
                 }
             }
-            clusterManager.getServerIdDb().setComputerId(choosenId, ServerIdDb::ComputerIdState::TEMPORARY);
+            clusterManager.getIdentityManager().setComputerId(choosenId, IdentityManager::ComputerIdState::TEMPORARY);
         } else {
             // yes
             // there are a conflict?
@@ -279,10 +242,10 @@ namespace supercloud{
                 log(std::string("my computerid is already connected, there : ") + clusterManager.getComputerId() + "\n");
                 // yes
                 // i choose my id recently?
-                if (clusterManager.getServerIdDb().getComputerIdState() == ServerIdDb::ComputerIdState::TEMPORARY) {
+                if (clusterManager.getIdentityManager().getComputerIdState() == IdentityManager::ComputerIdState::TEMPORARY) {
                     // change?
                     // TODO: choose a computer id, save it and close all connections before reconnecting.
-                    // getServerIdDb().timeChooseId
+                    // getIdentityManager().timeChooseId
                     error(std::to_string(clusterManager.getPeerId() % 100) + " ERROR! my ComputerId is already taken. Please destroy this instance/peer/server and create an other one.\n");
                     throw std::runtime_error("ERROR! my ComputerId is already taken. Please destroy this instance/peer/server and create an other one.");
                 } else {
@@ -299,7 +262,7 @@ namespace supercloud{
     }
     void ConnectionMessageManager::choosePeerId(const std::unordered_set<uint64_t>& registered_peer_id, const std::unordered_set<uint64_t>& connected_peer_id) {
         //do not run in multi-thread
-        std::lock_guard choosecomplock(clusterManager.getServerIdDb().synchronize());
+        std::lock_guard choosecomplock(clusterManager.getIdentityManager().synchronize());
 
         bool need_new_id = !clusterManager.hasPeerId();
         bool need_to_reconnect = false;
@@ -371,7 +334,7 @@ namespace supercloud{
         ByteBuff buff;
         // == put our id if any ==
         //TODO: use getComputerIdState instead of NO_COMPUTER_ID
-        bool has_id = clusterManager.getServerIdDb().getComputerIdState() != ServerIdDb::ComputerIdState::NOT_CHOOSEN || clusterManager.getComputerId() != NO_COMPUTER_ID;
+        bool has_id = clusterManager.getIdentityManager().getComputerIdState() != IdentityManager::ComputerIdState::NOT_CHOOSEN || clusterManager.getComputerId() != NO_COMPUTER_ID;
         // == first, the registered computer (and peer) ids (also with me if i was/is connected) ==
         buff.putTrailInt(registered.size() + has_id ? 1 : 0);
         if (has_id) {
@@ -398,7 +361,7 @@ namespace supercloud{
     void ConnectionMessageManager::sendServerId(Peer& peer) {
         ByteBuff buff;
         buff.putULong(clusterManager.getPeerId());
-        buff.putULong(clusterManager.getServerIdDb().getClusterId());
+        buff.putULong(clusterManager.getIdentityManager().getClusterId());
         buff.putInt(clusterManager.getListenPort());
         //clusterManager.writeMessage(peer, SEND_SERVER_ID, buff.flip());
         peer.writeMessage(*UnnencryptedMessageType::SEND_SERVER_ID, buff.flip());

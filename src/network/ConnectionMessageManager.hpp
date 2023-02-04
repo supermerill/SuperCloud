@@ -9,27 +9,8 @@
 
 namespace supercloud {
 
-    class PhysicalServer;
     class Peer;
-    class ServerIdDb;
-
-    class ConnectionMessageManagerServerSpecializedInterface {
-    public:
-        virtual ServerIdDb& getServerIdDb() = 0;
-        //virtual std::mutex& getServerIdDbMutex() = 0;
-        virtual PeerList getPeersCopy() = 0;
-        virtual std::shared_ptr<Peer> getPeerPtr(uint64_t senderId) = 0;
-        virtual Peer& getPeer(uint64_t senderId) = 0;
-        virtual uint16_t getListenPort() = 0;
-        virtual uint64_t getPeerId() = 0;
-        virtual void setPeerId(uint64_t new_peer_id) = 0;
-        virtual bool hasPeerId() = 0;
-    };
-    class ConnectionMessageManagerServerInterface : public ConnectionMessageManagerServerSpecializedInterface,
-        public ClusterManager
-    {
-
-    };
+    class IdentityManager;
 
     //struct Connection_data{};
 
@@ -81,9 +62,9 @@ namespace supercloud {
             ConnectionStep last_request = ConnectionStep::BORN;
         };
     protected:
-        ConnectionMessageManagerServerInterface& clusterManager;
+        PhysicalServer& clusterManager;
 
-        ConnectionMessageManager(ConnectionMessageManagerServerInterface& physicalServer) : clusterManager(physicalServer) {}
+        ConnectionMessageManager(PhysicalServer& physicalServer) : clusterManager(physicalServer) {}
 
         void chooseComputerId(const std::unordered_set<uint16_t>& registered_computer_id, const std::unordered_set<uint16_t>& connected_computer_id);
         void choosePeerId(const std::unordered_set<uint64_t>& registered_peer_id, const std::unordered_set<uint64_t>& connected_peer_id);
@@ -92,7 +73,7 @@ namespace supercloud {
     public:
 
         //factory
-        [[nodiscard]] static std::shared_ptr<ConnectionMessageManager> create(ConnectionMessageManagerServerInterface& physicalServer) {
+        [[nodiscard]] static std::shared_ptr<ConnectionMessageManager> create(PhysicalServer& physicalServer) {
             std::shared_ptr<ConnectionMessageManager> pointer = std::shared_ptr<ConnectionMessageManager>{ new ConnectionMessageManager(physicalServer) };
             pointer->register_listener();
             return pointer;

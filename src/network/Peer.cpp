@@ -7,9 +7,35 @@
 #include "utils/Utils.hpp"
 #include "network/ClusterManager.hpp"
 #include "PhysicalServer.hpp"
-#include "ServerIdDb.hpp"
+#include "IdentityManager.hpp"
 
 namespace supercloud {
+
+	std::string Peer::getIPNetwork() const {
+		std::string network = this->getIP();
+		if (std::count(network.begin(), network.end(), '/') == 1 && false) {
+			//i may be able to get it.... TODO:
+		} else if (std::count(network.begin(), network.end(), '.') == 3) {
+			//seems ipv4
+			//we guess a /24 network
+			network = network.substr(0, network.find_last_of('.'));
+		} else if (size_t nb_delim = std::count(network.begin(), network.end(), ':') > 1) {
+			//seems ipv6
+			// we remove the last 4 groups
+			if (nb_delim = 7) {
+				network = network.substr(0, network.find_last_of(':'));
+				network = network.substr(0, network.find_last_of(':'));
+				network = network.substr(0, network.find_last_of(':'));
+				network = network.substr(0, network.find_last_of(':'));
+			} else {
+				//??
+				network = network.substr(0, network.find_last_of(':'));
+			}
+		} else {
+			//other...
+		}
+		return network;
+	}
 
 	// receive only (read)
 	void Peer::run() {
@@ -102,7 +128,7 @@ namespace supercloud {
 
 	}
 
-	bool Peer::connect(std::shared_ptr<tcp::socket> sock) {
+	bool Peer::connect(std::shared_ptr<tcp::socket> sock, bool initiated_by_me) {
 		log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " going to connect with " + sock->remote_endpoint().port());
 		bool alreadyAlive = alive.exchange(true);
 		if (alreadyAlive) {
@@ -152,15 +178,16 @@ namespace supercloud {
 			log(std::to_string(myServer.getPeerId() % 100) + " win to connect with " + sock->remote_endpoint().port());
 			// connect
 			this->socket = sock;
+			this->is_initiator = initiated_by_me;
 
-			//Send the first message. SHould start the connection pipeline via the ConnectionMessageManager
-			// began directly by sending the id, instead of asking for it first.
-			myServer.message().sendServerId(*this);
+			//Send the first message. Should start the connection pipeline via the ConnectionMessageManager
+			// began directly by sending the id, instead of asking for it first. (emit the message that it's already been asked for)
+			myServer.propagateMessage(this->ptr(), *UnnencryptedMessageType::GET_SERVER_ID, ByteBuff{});
 
 			// read sendServerId from the other peer
 			readMessage();
 
-			// set that we are in connection
+			// set that we are connecting
 			aliveAndSet.store(true);
 			//log(std::to_string(myServer.getPeerId() % 100) + " " + myServer.getListenPort() + " succeed to connect to "
 			//		+ sock->remote_endpoint().port());
@@ -229,11 +256,11 @@ namespace supercloud {
 		//try {
 
 			//encode mesage
-			//if (encoder == null) encoder = myServer.getServerIdDb().getSecretCipher(this, Cipher.ENCRYPT_MODE);
+			//if (encoder == null) encoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.ENCRYPT_MODE);
 			uint8_t* encodedMsg = nullptr;
 			size_t encodedMsgLength = 0;
 			if (messageId > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
-				if (myServer.getServerIdDb().has_aes(*this)) {
+				if (this->isConnected()) {
 					if (message.limit() - message.position() > 0) {
 						//encodedMsg = encoder.doFinal(message.array(), message.position(), message.limit());
 						// TODO: naive cipher: xor with a passphrase
@@ -375,11 +402,11 @@ namespace supercloud {
 					}
 				}
 				//decode mesage
-				//if (decoder == nullptr) decoder = myServer.getServerIdDb().getSecretCipher(this, Cipher.DECRYPT_MODE);
+				//if (decoder == nullptr) decoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.DECRYPT_MODE);
 				uint8_t* decodedMsg = nullptr;
 				size_t decodedMsgLength = 0;
 				if (newByte > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
-					if (myServer.getServerIdDb().has_aes(*this)) {
+					if (this->isConnected()) {
 						if (buffIn.position() < buffIn.limit() && nbBytes > 0 && buffIn.limit() - buffIn.position() > 0) {
 							//decodedMsg = decoder.doFinal(buffIn.raw_array(), buffIn.position(), buffIn.limit());
 							// TODO: naive xor
@@ -421,6 +448,7 @@ namespace supercloud {
 		//set as not alive
 		bool was_alive = alive.exchange(false);
 		aliveAndSet.store(false);
+		connected = false;
 		// notify the listener that this connection is lost.
 		// (so they still have a chance to emit a last message before closure) 
 		if (was_alive) {

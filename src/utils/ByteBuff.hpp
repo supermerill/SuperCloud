@@ -146,8 +146,10 @@ namespace supercloud {
 		//wchar getWChar();
 		//ByteBuff& putWChar(const wchar value);
 
-		short getShort();
-		ByteBuff& putShort(const short value);
+		int16_t getShort();
+		ByteBuff& putShort(const int16_t value);
+		uint16_t getUShort();
+		ByteBuff& putUShort(const uint16_t value);
 
 		// TODO amÃ©liorer le truc pour les chiffres nÃ©gatifs
 		ByteBuff& putTrailInt(const int32_t num);

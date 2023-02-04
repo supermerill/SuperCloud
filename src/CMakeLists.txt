@@ -13,12 +13,14 @@ add_library(libsupercloud STATIC
     network/ConnectionMessageManagerInterface.hpp
 	network/ConnectionMessageManager.hpp
 	network/ConnectionMessageManager.cpp
+	network/ClusterAdminMessageManager.hpp
+	network/ClusterAdminMessageManager.cpp
     network/Peer.cpp
     network/Peer.hpp
 	network/PhysicalServer.cpp
 	network/PhysicalServer.hpp
-	network/ServerIdDb.cpp
-	network/ServerIdDb.hpp
+	network/IdentityManager.cpp
+	network/IdentityManager.hpp
     utils/ByteBuff.cpp
     utils/ByteBuff.hpp
     utils/Utils.cpp

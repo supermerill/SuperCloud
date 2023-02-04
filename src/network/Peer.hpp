@@ -27,6 +27,7 @@ namespace supercloud {
 	class Peer : public std::enable_shared_from_this<Peer> {
 
 	public:
+		Peer(const Peer&) = delete;
 
 		class PeerKey {
 		private:
@@ -124,6 +125,13 @@ namespace supercloud {
 		/// </summary>
 		int aliveFail = 0;
 
+
+		/// <summary>
+		/// The connection protocol has ended with success. evryone can now emit message to this peer.
+		/// </summary>
+		bool connected = false;
+		bool is_initiator = false;
+
 		std::shared_ptr<tcp::socket> sockWaitToDelete = nullptr;
 		CloseReason close_reason = CloseReason::ALIVE;
 
@@ -167,7 +175,7 @@ namespace supercloud {
 
 		void reconnect();
 
-		bool connect(std::shared_ptr<tcp::socket> sock);
+		bool connect(std::shared_ptr<tcp::socket> sock, bool initiated_by_me);
 
 		void startListen();
 
@@ -201,12 +209,21 @@ namespace supercloud {
 			return myKey.getAddress();
 		}
 
+		/// <summary>
+		/// Like get Ip but just the network part.
+		/// </summary>
+		/// <returns></returns>
+		std::string getIPNetwork() const;
+
 		uint16_t getPort() const {
 			return myKey.getPort();
 		}
 
 		bool isAlive() const {
 			return alive.load();
+		}
+		bool initiatedByMe() {
+			return is_initiator;
 		}
 
 		void setPort(uint16_t port) {
@@ -219,6 +236,8 @@ namespace supercloud {
 			return myKey;
 		}
 
+		void setConnected() { connected = true; }
+		bool isConnected() { return connected; }
 		void close();
 
 		void setComputerId(uint16_t distId) {
