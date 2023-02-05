@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <vector>
 
-#define SLOW_NETWORK_FOR_DEBUG 1
+//#define SLOW_NETWORK_FOR_DEBUG 1
 
 namespace supercloud{
 	//FIXME constexpr
@@ -133,6 +133,7 @@ namespace supercloud{
 			bool valid() { return pos >= 0 && pos < vec->size(); }
 			/// get the current value of the iterator, don't call it if valid() return false.
 			T& operator*() { return (*vec)[pos]; }
+			T* operator->() { return &(*vec)[pos]; }
 			/// get the current value of the iterator with bounds check.
 			T& get() { return vec->at(pos); }
 			/// get the current std::iterator position. It's before begin() at creation, and only get the begin() value after the first next().

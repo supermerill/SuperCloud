@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <set>
 #include <string>
 #include <boost/asio.hpp>
 
@@ -61,6 +62,11 @@ namespace supercloud {
 		/// </summary>
 		SEND_SERVER_AES_KEY,
 		/// <summary>
+		///  We a peer decide to change our computer id because of a collision, it emit this message.
+		/// TODO
+		/// </summary>
+		REVOKE_COMPUTER_ID,
+		/// <summary>
 		/// For priority unencrypted message (ping or things like that)
 		/// </summary>
 		PRIORITY_CLEAR,
@@ -99,6 +105,53 @@ namespace supercloud {
 	};
 	constexpr auto operator*(UnnencryptedMessageType emt) noexcept{return static_cast<uint8_t>(emt);}
 
+
+	class ServerConnectionState {
+	protected:
+		size_t m_something_connecting = 0;
+		mutable std::mutex mutex;
+		std::set<uint16_t> m_connected;
+		bool has_connection = false;
+	public:
+		inline bool wasConnected() const { return has_connection; }
+		inline bool isConnected() const { return m_connected.size() > 0; }
+		inline bool isConnected(uint16_t computer_id) const { std::lock_guard lock{ mutex }; return m_connected.find(computer_id) != m_connected.end(); }
+		inline bool isConnectionInProgress() const { return m_something_connecting>0; }
+		inline size_t getConnectionsCount() const { return m_connected.size(); }
+
+		inline void beganConnection() {
+			std::lock_guard lock{ mutex };
+			++m_something_connecting;
+		}
+		inline void abordConnection() {
+			std::lock_guard lock{ mutex };
+			assert(m_something_connecting > 0);
+			m_something_connecting = std::max(size_t(0), m_something_connecting - 1);
+		}
+		inline void finishConnection(uint16_t computer_id) {
+			std::lock_guard lock{ mutex };
+			assert(m_something_connecting > 0);
+			m_something_connecting = std::max(size_t(0), m_something_connecting - 1);
+			m_connected.insert(computer_id);
+			has_connection = true;
+		}
+		inline void removeConnection(uint16_t computer_id) {
+			std::lock_guard lock{ mutex };
+			auto it = m_connected.find(computer_id);
+			assert(it != m_connected.end());
+			if (it != m_connected.end()) {
+				m_connected.erase(it);
+			}
+		}
+		inline void disconnect() {
+			std::lock_guard lock{ mutex };
+			assert(m_connected.empty());
+			assert(m_something_connecting == 0);
+			m_connected.clear();
+			m_something_connecting = 0;
+		}
+	};
+
 	class AbstractMessageManager {
 	public:
 		virtual void receiveMessage(PeerPtr sender, uint8_t messageId, ByteBuff message) = 0;
@@ -106,13 +159,7 @@ namespace supercloud {
 
 	class ClusterManager {
 	public:
-		//not used ... yet?
-		//virtual void requestUpdate(int64_t since) = 0;
-		//virtual void requestChunk(uint64_t fileId, uint64_t chunkId) = 0;
-		//virtual void propagateDirectoryChange(uint64_t directoryId, std::vector<uint8_t> changes) = 0; //TODO
-		//virtual void propagateFileChange(uint64_t directoryId, std::vector<uint8_t> changes) = 0; //TODO
-		//virtual void propagateChunkChange(uint64_t directoryId, std::vector<uint8_t> changes) = 0; //TODO
-
+		const ServerConnectionState& getState();
 
 
 		//used

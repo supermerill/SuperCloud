@@ -9,6 +9,8 @@
 #include "PhysicalServer.hpp"
 #include "IdentityManager.hpp"
 
+//#define SLOW_NETWORK_FOR_DEBUG 1
+
 namespace supercloud {
 
 	std::string Peer::getIPNetwork() const {
@@ -234,7 +236,9 @@ namespace supercloud {
 		fullData.flip();
 		log(std::to_string( this->myServer.getPeerId() % 100 ) + " write socket: " + socket->is_open() + "\n");
 		{ std::lock_guard lock_socket{ socket_read_write_mutex };
-			boost::asio::write(*socket, boost::asio::buffer(fullData.raw_array(), fullData.limit()));
+			if (connected || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
+				boost::asio::write(*socket, boost::asio::buffer(fullData.raw_array(), fullData.limit()));
+			}
 		}
 		if (message.position() != 0) {
 			msg(std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
@@ -295,7 +299,9 @@ namespace supercloud {
 			fullData.flip();
 			boost::system::error_code error_write;
 			{ std::lock_guard lock_socket{ socket_read_write_mutex };
-				boost::asio::write(*socket, boost::asio::buffer(fullData.raw_array(), fullData.limit()), error_write);
+				if (connected || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
+					boost::asio::write(*socket, boost::asio::buffer(fullData.raw_array(), fullData.limit()), error_write);
+				}
 			}
 			if (encodedMsg != nullptr && message.position() != 0) {
 				msg(std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
@@ -438,7 +444,7 @@ namespace supercloud {
 		}
 		catch (std::exception e) {
 			std::cerr << "ERROR: " << e.what() << "\n";
-			throw std::runtime_error(e.what());
+			close();
 		}
 	}
 
@@ -448,25 +454,28 @@ namespace supercloud {
 		//set as not alive
 		bool was_alive = alive.exchange(false);
 		aliveAndSet.store(false);
-		connected = false;
 		// notify the listener that this connection is lost.
 		// (so they still have a chance to emit a last message before closure) 
 		if (was_alive) {
 			this->myServer.propagateMessage(this->ptr(), *UnnencryptedMessageType::CONNECTION_CLOSED, ByteBuff{});
 		}
-		//close the socket
-		try {
-			if (sockWaitToDelete && sockWaitToDelete->is_open()) {
-				sockWaitToDelete->shutdown(tcp::socket::shutdown_both);
-				sockWaitToDelete->close();
+		//stay connected until the CONNECTION_CLOSED is finished, just before deleting the sockets
+		{ std::lock_guard lock_socket{ socket_read_write_mutex };
+			connected = false;
+			//close the socket
+			try {
+				if (sockWaitToDelete && sockWaitToDelete->is_open()) {
+					sockWaitToDelete->shutdown(tcp::socket::shutdown_both);
+					sockWaitToDelete->close();
+				}
+				if (socket && socket->is_open()) {
+					socket->shutdown(tcp::socket::shutdown_both);
+					socket->close();
+				}
 			}
-			if (socket && socket->is_open()) {
-				socket->shutdown(tcp::socket::shutdown_both);
-				socket->close();
+			catch (std::exception e) {
+				std::cerr << "ERROR: " << e.what() << "\n";
 			}
-		}
-		catch (std::exception e) {
-			std::cerr << "ERROR: " << e.what() << "\n";
 		}
 
 	}

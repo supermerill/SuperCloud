@@ -64,16 +64,20 @@ namespace supercloud {
 		 * @param unsafe
 		 *            true for sharing an array, for a moment. False to copy.
 		 */
-		ByteBuff(const ByteBuff& buffIn) : m_buffer(new uint8_t[buffIn.m_length]), m_length(buffIn.m_length), m_limit(buffIn.m_length), m_position(buffIn.m_position) {
-			std::copy(buffIn.m_buffer.get(), buffIn.m_buffer.get() + buffIn.m_length, m_buffer.get());
-		}
-		ByteBuff& operator=(ByteBuff& buffIn) {
-			reset();
-			put(buffIn);
+		ByteBuff(const ByteBuff& buffIn) : m_buffer(new uint8_t[buffIn.m_length]), m_length(buffIn.m_length), m_limit(buffIn.m_limit), m_position(buffIn.m_position) {
+			std::copy(buffIn.m_buffer.get(), buffIn.m_buffer.get() + buffIn.m_length, this->m_buffer.get());
 		}
 		ByteBuff(ByteBuff&&) = default;
+		ByteBuff& operator=(const ByteBuff& buffIn) {
+			reset();
+			expand(buffIn.m_limit - buffIn.m_position);
+			std::copy(buffIn.m_buffer.get() + buffIn.m_position, buffIn.m_buffer.get() + buffIn.m_limit, this->m_buffer.get());
+			//System.arraycopy(src.m_buffer, src.m_position, this->m_buffer, this->m_position, size);
+			this->m_position = buffIn.m_position;
+			this->m_limit = buffIn.m_limit;
+			return *this;
+		}
 		ByteBuff& operator=(ByteBuff&&) = default;
-
 		virtual ~ByteBuff() {}
 
 
@@ -115,6 +119,7 @@ namespace supercloud {
 		ByteBuff& put(const uint8_t b);
 
 		std::vector<uint8_t> get(const size_t nbElt);
+		std::vector<uint8_t> getAll();
 		ByteBuff& put(std::vector<uint8_t>);
 
 		/**
@@ -148,10 +153,10 @@ namespace supercloud {
 
 		int16_t getShort();
 		ByteBuff& putShort(const int16_t value);
+
 		uint16_t getUShort();
 		ByteBuff& putUShort(const uint16_t value);
 
-		// TODO amÃ©liorer le truc pour les chiffres nÃ©gatifs
 		ByteBuff& putTrailInt(const int32_t num);
 		int32_t getTrailInt();
 
@@ -160,8 +165,12 @@ namespace supercloud {
 
 		int64_t getLong();
 		ByteBuff& putLong(const int64_t value);
+
 		uint64_t getULong() { return uint64_t(getLong()); }
 		ByteBuff& putULong(const uint64_t value) { return putLong(int64_t(value)); }
+
+		ByteBuff& putSize(const uint64_t num);
+		uint64_t getSize();
 
 		float getFloat();
 		ByteBuff& putFloat(const float value);

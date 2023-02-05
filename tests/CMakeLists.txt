@@ -24,3 +24,4 @@ target_link_libraries(test_common INTERFACE Catch2::Catch2)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 add_subdirectory(network)
+add_subdirectory(others)

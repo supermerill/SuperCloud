@@ -5,7 +5,6 @@
 
 #include "utils/Parameters.hpp"
 #include "network/PhysicalServer.hpp"
-#include "fs/stubFileSystemManager.hpp"
 
 using namespace supercloud;
 
@@ -56,8 +55,7 @@ std::shared_ptr<PhysicalServer> createPeer(const std::string& name, uint16_t lis
 		
 
     //launch first peer
-	std::shared_ptr<FileSystemManager> stub{ new FileSystemManager()};
-	std::shared_ptr<PhysicalServer> net{ new PhysicalServer{stub, tmp_dir_path} };
+	std::shared_ptr<PhysicalServer> net = PhysicalServer::createAndInit(tmp_dir_path);
 	net->listen(listen_port);
 	net->launchUpdater();
 
@@ -81,8 +79,7 @@ std::shared_ptr<PhysicalServer> createPeer2(const std::string& name, uint16_t li
 	params_net.setBool("FirstConnection", true);
 
 	//launch first peer
-	std::shared_ptr<FileSystemManager> stub{ new FileSystemManager() };
-	std::shared_ptr<PhysicalServer> net{ new PhysicalServer{stub, tmp_dir_path} };
+	std::shared_ptr<PhysicalServer> net = PhysicalServer::createAndInit(tmp_dir_path);
 	net->listen(listen_port);
 	net->launchUpdater();
 
@@ -96,18 +93,19 @@ int main(int argc, char* argv[]) {
 
 
 
-	Sleep(2000);
+	std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
 	auto net2 = createPeer2("peer2");
-	Sleep(1000);
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 	net2->connect();
 
-	Sleep(100000);
+	std::this_thread::sleep_for(std::chrono::seconds(10));
 
 	std::cout << "--- C L O S E !! ---\n";
 	net->close();
-	net2->close();
+	//net2->close();
 	std::cout << "--- C L O S E D !! ---\n";
 
+	std::this_thread::sleep_for(std::chrono::seconds(1000));
 	return 0;
 }

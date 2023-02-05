@@ -97,7 +97,7 @@ namespace supercloud{
 				}
 			}
 			if (!paramsNet.has("PubKey") || !paramsNet.has("PrivKey")) {
-				log("no priv/pub key defeined, creating some random ones\n");
+				log("no priv/pub key defined, creating some random ones\n");
 				createNewPublicKey();
 			} else {
 				//TODO : get key from unicode string
@@ -272,7 +272,7 @@ namespace supercloud{
 		//uint8_t[] encodedPubKey = publicKey.getEncoded();
 		const uint8_t* encodedPubKey = reinterpret_cast<const uint8_t*>(&publicKey[0]);
 		size_t encodedPubKey_size = publicKey.size();
-		buff.putInt(encodedPubKey_size).put(encodedPubKey, size_t(0), encodedPubKey_size);
+		buff.putSize(encodedPubKey_size).put(encodedPubKey, size_t(0), encodedPubKey_size);
 		//send packet
 		peer.writeMessage(*UnnencryptedMessageType::SEND_SERVER_PUBLIC_KEY, buff.flip());
 
@@ -282,7 +282,7 @@ namespace supercloud{
 		log(std::to_string(serv.getPeerId() % 100) + " (receivePublicKey) receive SEND_SERVER_PUBLIC_KEY from " + sender.getPeerId() % 100+"\n");
 		
 		//get pub Key
-		int32_t nbBytes = buffIn.getInt();
+		size_t nbBytes = buffIn.getSize();
 		//byte[] encodedPubKey = new byte[nbBytes];
 		std::shared_ptr<uint8_t> encodedPubKey{ new uint8_t[int32_t(nbBytes + 1)] };
 		buffIn.get(encodedPubKey.get(), 0, nbBytes);
@@ -357,7 +357,7 @@ namespace supercloud{
 		//cipher.init(Cipher.ENCRYPT_MODE, theirPubKey);
 		//buffEncoded = blockCipher(buffEncoded.array(), Cipher.ENCRYPT_MODE, cipher);
 
-		buff.putInt(buffEncoded.limit()).put(buffEncoded);
+		buff.putSize(buffEncoded.limit()).put(buffEncoded);
 		log(std::to_string(serv.getPeerId() % 100) + " (sendIdentity" + isRequest + ") message : " + messageToEncrypt+"\n");
 		//log(std::to_string(serv.getPeerId() % 100) + " (sendIdentity" + isRequest + ") Encryptmessage : " + Arrays.tostd::string(buffEncoded.rewind().array())+"\n");
 
@@ -369,7 +369,7 @@ namespace supercloud{
 
 	ByteBuff IdentityManager::getIdentityDecodedMessage(const PublicKey& key, ByteBuff& buffIn) {
 		//get msg
-		int nbBytes = buffIn.getInt();
+		size_t nbBytes = buffIn.getSize();
 		/*byte[] dataIn = new byte[nbBytes];
 		buffIn.get(dataIn, 0, nbBytes);
 		Cipher cipher = Cipher.getInstance("RSA");
@@ -672,9 +672,9 @@ namespace supercloud{
 			//Cipher cipherPub = Cipher.getInstance("RSA");
 			//cipherPub.init(Cipher.ENCRYPT_MODE, id2PublicKey.get(peer.getComputerId()));
 			//ByteBuff buffEncodedPrivPub = blockCipher(buffEncodedPriv.toArray(), Cipher.ENCRYPT_MODE, cipherPub);
-			//buffMsg.putInt(buffEncodedPrivPub.limit()).put(buffEncodedPrivPub);
+			//buffMsg.putSize(buffEncodedPrivPub.limit()).put(buffEncodedPrivPub);
 			//log(std::to_string(serv.getPeerId() % 100) + " (sendAesKey) EncryptKey2 : " + Arrays.tostd::string(buffEncodedPrivPub.array())+"\n");
-			buffMsg.putInt(secretKey.size()).put(secretKey);
+			buffMsg.putSize(secretKey.size()).put(secretKey);
 
 			//send packet
 			peer.writeMessage(*UnnencryptedMessageType::SEND_SERVER_AES_KEY, buffMsg.flip());
@@ -698,7 +698,7 @@ namespace supercloud{
 			//0 : get the message
 			uint8_t aesStateMsg = message.get();
 			log(std::to_string(serv.getPeerId() % 100) + " (receiveAesKey) receive SEND_SERVER_AES_KEY state:" + (int)(aesStateMsg)+" : " + ((aesStateMsg & AES_CONFIRM) != 0 ? "CONFIRM" : "PROPOSAL")+"\n");
-			int nbBytesMsg = message.getInt();
+			size_t nbBytesMsg = message.getSize();
 			std::vector<uint8_t> aesKeyEncrypt = message.get(nbBytesMsg);
 			//log(std::to_string(serv.getPeerId() % 100) + " (receiveAesKey) EncryptKey2 : " + aesKeyEncrypt +"\n");
 			//1: decrypt with our private key

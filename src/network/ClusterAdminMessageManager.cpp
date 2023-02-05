@@ -46,19 +46,23 @@ namespace supercloud{
             log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " received SEND_SERVER_LIST");
             readServerDatabaseMessage(message);
         }
+        if (messageId == *UnnencryptedMessageType::TIMER_MINUTE) {
+            //try to connect to some nice peers that aren't connected yet
+            //TODO
 
+        }
     }
 
     void ClusterAdminMessageManager::readServerDatabaseMessage(ByteBuff& msg) {
 
         std::vector<PeerPtr> loaded_peers = clusterManager.getIdentityManager().getLoadedPeers();
-        int32_t nb_entries = msg.getTrailInt();
+        size_t nb_entries = msg.getSize();
         for (size_t idx = 0; idx < nb_entries; ++idx) {
             uint64_t peerid = msg.getULong();
             uint16_t computerId = msg.getUShort();
             PublicKey rsa_pub_key = msg.getUTF8();
             std::vector<std::pair<std::string, IdentityManager::PeerConnection>> connections;
-            int32_t nb_conn = msg.getTrailInt();
+            size_t nb_conn = msg.getSize();
             for (size_t idx_conn = 0; idx_conn < nb_conn; ++idx_conn) {
                 std::string network = msg.getUTF8();
                 std::string ip = msg.getUTF8();
@@ -125,7 +129,7 @@ namespace supercloud{
     void ClusterAdminMessageManager::emitServerDatabase(Peer& sendTo, const std::vector<PeerPtr>& registered) {
         ByteBuff buff;
         // == our database ==
-        buff.putTrailInt(int32_t(registered.size()));
+        buff.putSize(registered.size());
         for (const PeerPtr& peer : registered) {
             // the peer id, not that useful, but can help to match with already connected peers
             buff.putULong(peer->getPeerId());
@@ -174,7 +178,7 @@ namespace supercloud{
                     if (!toSend.empty()) break;
                 }
             }
-            buff.putTrailInt(toSend.size());
+            buff.putSize(toSend.size());
             for (std::pair<std::string, IdentityManager::PeerConnection>& net2ip : toSend) {
                 buff.putUTF8(net2ip.first);
                 buff.putUTF8(net2ip.second.address);

@@ -96,6 +96,11 @@ std::vector<uint8_t> ByteBuff::get(const size_t nbElt)
     m_position += nbElt;
     return newBuff;
 }
+
+std::vector<uint8_t> ByteBuff::getAll() {
+    return ByteBuff::get(this->m_limit - this->m_position);
+}
+
 ByteBuff& ByteBuff::put(std::vector<uint8_t> src)
 {
     expand(src.size());
@@ -350,6 +355,32 @@ int32_t ByteBuff::getTrailInt()
 
 }
 
+ByteBuff& ByteBuff::putSize(const uint64_t num) {
+    //does it have less than 29 significant bits? (can't be negative as it's unsigned)
+    if ( (num>>28) == 0) {
+        //use trail int
+        return putTrailInt(int32_t(num));
+    } else {
+        //use putULong after the marker byte.
+        put(uint8_t(0xFF));
+        putULong(num);
+    }
+}
+uint64_t ByteBuff::getSize() {
+
+    readcheck(1);
+    const uint8_t b = this->m_buffer[this->m_position];
+    if ((b & 0xFF) == 0xFF) {
+        //ulong
+        ++this->m_position;
+        return getULong();
+    } else {
+        //trailint
+        return uint64_t(getTrailInt());
+    }
+
+}
+
 int32_t ByteBuff::getInt()
 {
     readcheck(4);
@@ -462,14 +493,14 @@ ByteBuff& ByteBuff::putDouble(const double value)
 ByteBuff& ByteBuff::putUTF8(const std::string str)
 {
     //const ByteBuffer buffUTF8 = UTF8.encode(str);
-    putTrailInt(str.size());
+    putSize(str.size());
     put((uint8_t*)str.data(), 0, str.size());
     return *this;
 }
 
 std::string ByteBuff::getUTF8()
 {
-    const size_t size = getTrailInt();
+    const size_t size = getSize();
     readcheck(size);
     std::string newBuff((char*)this->m_buffer.get() + this->m_position, size);
     //System.arraycopy(this->m_buffer, this->m_position, newBuff.data(), 0, size);

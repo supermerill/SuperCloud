@@ -30,7 +30,6 @@ add_library(libsupercloud STATIC
 #    fs/FileSystemManager.hpp
 #    fs/StandardManager.hpp
 #    fs/StandardManager.cpp
-    fs/stubFileSystemManager.hpp
 )
 
 #encoding_check(libsupercloud)

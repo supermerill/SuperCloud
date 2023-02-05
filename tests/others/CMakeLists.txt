@@ -1,8 +1,7 @@
 get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 
 add_executable(${_TEST_NAME}_tests
-    test_connection.cpp
-	test_connection_messages.cpp
+    test_ByteBuff.cpp
 	)
 
     

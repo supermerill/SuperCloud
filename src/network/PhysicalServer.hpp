@@ -15,7 +15,6 @@ using boost::asio::ip::tcp;
 namespace supercloud {
 
     class IdentityManager;
-    class FileSystemManager;
     class ClusterAdminMessageManager;
     class ConnectionMessageManager;
 
@@ -45,24 +44,12 @@ namespace supercloud {
      * @author centai
      *
      */
-    class PhysicalServer : public ClusterManager {
-    public:
-
-        enum class ServerConnectionState : uint8_t {
-            JUST_BORN,
-            CONNECTING,
-            CONNECTED,
-            DISCONNECTED,
-
-            SOLO,
-            HAS_FRIENDS
-        };
-
+    class PhysicalServer : public ClusterManager, public std::enable_shared_from_this<PhysicalServer>{
     protected:
         uint64_t myPeerId = NO_PEER_ID;
         bool has_peer_id = false;
 
-        ServerConnectionState myInformalState = ServerConnectionState::JUST_BORN;
+        ServerConnectionState m_state;
 
         // should be inetAddress ut it's implier with this to test in 1 pc.
         // private Map<PeerKey ,Peer> peers = new HashMap<>();
@@ -75,19 +62,16 @@ namespace supercloud {
         bool hasSocketListener = false;
         bool hasUpdaterThread = false;
 
-        //pointer to other manager
-        std::shared_ptr<FileSystemManager> myFs;
-        std::shared_ptr<IdentityManager> clusterIdMananger;
-        //i'm the owner of this one
+        //pointer to other net managers
+        //i'm the "owner" of these ones
         std::shared_ptr<ConnectionMessageManager> connectionManager;
         std::shared_ptr<ClusterAdminMessageManager> clusterAdminManager;
+        std::shared_ptr<IdentityManager> clusterIdMananger;
 
-        // each messageid has its vector of listeners 
+        // each messageid has its vector of listeners
+        mutable std::mutex listeners_mutex;
         std::map<uint8_t, std::vector<std::shared_ptr<AbstractMessageManager>>> listeners;
 
-        //std::string jarFolder = "./jars";
-
-        int64_t lastDirUpdate = 0;
 
         // for update() method
         int64_t last_minute_update = 0;
@@ -102,8 +86,19 @@ namespace supercloud {
          */
         bool initConnection(PeerPtr peer, std::shared_ptr<tcp::socket> sock, bool initiated_by_me);
 
+        PhysicalServer() : myPeerId(rand_u63()), has_peer_id(false) {}
     public:
-        PhysicalServer(std::shared_ptr<FileSystemManager> fs, const std::filesystem::path& folderPath);
+        //not private to allow tests
+        static std::shared_ptr<PhysicalServer> createForTests() {
+            return std::shared_ptr<PhysicalServer>{ new PhysicalServer{} };
+        }
+
+        //factory
+        [[nodiscard]] static std::shared_ptr<PhysicalServer> createAndInit(const std::filesystem::path& folderPath);
+
+        std::shared_ptr<PhysicalServer> ptr() {
+            return shared_from_this();
+        }
 
         /// <summary>
         /// launch a thread that update() each seconds.
@@ -129,6 +124,7 @@ namespace supercloud {
         bool hasPeerId() const { return has_peer_id && myPeerId != 0 && myPeerId != NO_PEER_ID; }
         uint16_t getComputerId() const override;
 
+        const ServerConnectionState& getState() { return m_state; }
 
         /// <summary>
         /// get a peer. it's discouraged to use that method, as you should have better ways to get it.
@@ -164,14 +160,12 @@ namespace supercloud {
 
 
         uint16_t getListenPort() {
-            return mySocket->local_endpoint().port();
+            return mySocket ? mySocket->local_endpoint().port() : 0;
             //return mySocket.getLocalPort();
         }
 
         void removeExactPeer(Peer* peer);
         void removeExactPeer(PeerPtr& peer);
-
-        FileSystemManager* getFileSystem();
 
 
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -182,6 +176,8 @@ namespace supercloud {
         /// When answering a message, please not lock the thread for too long (no sleep / read or other blocking method, use async or pop a thread).
         /// </summary>
         void registerListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener);
+
+        void unregisterListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener);
 
         /// <summary>
         /// Propgate a message to listners.
@@ -206,11 +202,7 @@ namespace supercloud {
 
 
         tcp::endpoint getListening() override{
-            return mySocket->local_endpoint();
-        }
-
-        ServerConnectionState getState() {
-            return myInformalState;
+            return mySocket ? mySocket->local_endpoint() : tcp::endpoint{};
         }
 
         virtual void close() override;

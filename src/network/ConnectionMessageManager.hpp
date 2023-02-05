@@ -61,20 +61,39 @@ namespace supercloud {
             ConnectionStep recv = ConnectionStep::BORN;
             ConnectionStep last_request = ConnectionStep::BORN;
         };
-    protected:
-        PhysicalServer& clusterManager;
 
-        ConnectionMessageManager(PhysicalServer& physicalServer) : clusterManager(physicalServer) {}
+        struct Data_SEND_SERVER_ID {
+            uint64_t peer_id;
+            uint64_t cluster_id;
+            uint16_t port;
+        };
+
+        struct Data_SEND_SERVER_LIST {
+            std::unordered_set<uint16_t> registered_computer_id;
+            std::unordered_set<uint16_t> connected_computer_id;
+            std::unordered_set<uint64_t> registered_peer_id;
+            std::unordered_set<uint64_t> connected_peer_id;
+        };
+    protected:
+        std::shared_ptr<PhysicalServer> clusterManager;
 
         void chooseComputerId(const std::unordered_set<uint16_t>& registered_computer_id, const std::unordered_set<uint16_t>& connected_computer_id);
         void choosePeerId(const std::unordered_set<uint64_t>& registered_peer_id, const std::unordered_set<uint64_t>& connected_peer_id);
-
+        
+        mutable std::mutex status_mutex;
         std::map<PeerPtr, ConnectionStatus> status;
+        ServerConnectionState& m_connection_state;
+
+        ConnectionMessageManager(std::shared_ptr<PhysicalServer> physicalServer, ServerConnectionState& state) : clusterManager(physicalServer), m_connection_state(state) {}
+
+        void reconnectWithNewComputerId();
+        void setStatus(const PeerPtr& peer, const ConnectionStep new_status);
+
     public:
 
         //factory
-        [[nodiscard]] static std::shared_ptr<ConnectionMessageManager> create(PhysicalServer& physicalServer) {
-            std::shared_ptr<ConnectionMessageManager> pointer = std::shared_ptr<ConnectionMessageManager>{ new ConnectionMessageManager(physicalServer) };
+        [[nodiscard]] static std::shared_ptr<ConnectionMessageManager> create(std::shared_ptr<PhysicalServer> physicalServer, ServerConnectionState& connection_state) {
+            std::shared_ptr<ConnectionMessageManager> pointer = std::shared_ptr<ConnectionMessageManager>{ new ConnectionMessageManager(physicalServer, connection_state) };
             pointer->register_listener();
             return pointer;
         }
@@ -89,11 +108,14 @@ namespace supercloud {
 
         void receiveMessage(PeerPtr peer, uint8_t messageId, ByteBuff message) override;
 
-        void sendServerList(Peer& sendTo, const std::vector<PeerPtr>& registered, const PeerList& connected);
 
-        void sendServerId(Peer& peer);
+     //only for tests, should be protected
+        ByteBuff create_SEND_SERVER_ID_msg(Data_SEND_SERVER_ID& data);
+        Data_SEND_SERVER_ID get_SEND_SERVER_ID_msg(ByteBuff& msg);
 
-        void useServerList(PeerPtr sender, ByteBuff& message);
+        Data_SEND_SERVER_LIST create_Data_SEND_SERVER_LIST();
+        ByteBuff create_SEND_SERVER_LIST_msg(Data_SEND_SERVER_LIST& data);
+        Data_SEND_SERVER_LIST get_SEND_SERVER_LIST_msg(ByteBuff& msg);
 
     };
 } // namespace supercloud
