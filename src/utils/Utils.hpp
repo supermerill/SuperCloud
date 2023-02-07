@@ -1,13 +1,53 @@
 #pragma once
 
-#include <string>
+#include <condition_variable>
+#include <cstdint>
 #include <iostream>
-#include <sstream>
+#include <mutex>
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 //#define SLOW_NETWORK_FOR_DEBUG 1
+
+// waiting for c++20 to have it in the stl.
+namespace std{
+	class counting_semaphore {
+		std::mutex mutex_;
+		std::condition_variable condition_;
+		size_t count_;
+
+	public:
+		counting_semaphore() : count_(0uL) { }// Initialized as locked.
+		counting_semaphore(size_t available) : count_(available) { }// Initialized as locked.
+		counting_semaphore(const counting_semaphore&) = delete; // can't copy
+		counting_semaphore& operator=(const counting_semaphore&) = delete; // can't copy
+
+		void release() {
+			std::lock_guard<decltype(mutex_)> lock(mutex_);
+			++count_;
+			condition_.notify_one();
+		}
+
+		void acquire() {
+			std::unique_lock<decltype(mutex_)> lock(mutex_);
+			while (!count_) // Handle spurious wake-ups.
+				condition_.wait(lock);
+			--count_;
+		}
+
+		bool try_acquire() {
+			std::lock_guard<decltype(mutex_)> lock(mutex_);
+			if (count_) {
+				--count_;
+				return true;
+			}
+			return false;
+		}
+	};
+}
 
 namespace supercloud{
 	//FIXME constexpr
@@ -29,6 +69,7 @@ namespace supercloud{
 	uint64_t rand_u63();
 	uint16_t rand_u16();
 	uint8_t rand_u8();
+
 
 	//inline void  compareDirect(const std::string& fileName, int min, int max);
 
@@ -83,6 +124,9 @@ namespace supercloud{
 	//	return lhs + std::to_string(rhs);
 	//}
 
+	std::vector<std::string> split(const std::string& input, char delim);
+	std::string concatenate(const std::vector<std::string>& input, char delim);
+
 	template<class NUMERIC>
 	int compare(NUMERIC x, NUMERIC y) {
 		return (x < y) ? -1 : ((x == y) ? 0 : 1);
@@ -90,10 +134,11 @@ namespace supercloud{
 
 	template<class PTR>
 	bool contains(const std::vector<PTR>& list, const PTR& test) {
-		for (const PTR& obj : list)
-			if (obj == test)
-				return true;
-		return false;
+		return std::find(list.begin(), list.end(), test) != list.end();
+		//for (const PTR& obj : list)
+		//	if (obj == test)
+		//		return true;
+		//return false;
 	}
 	template<class TYPE>
 	bool contains_reference(const std::vector<TYPE>& list, const TYPE& test) {

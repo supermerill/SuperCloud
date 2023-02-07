@@ -31,18 +31,22 @@ public:
 		std::string address;
 		uint16_t port;
 		bool first_hand_information;
-		bool intitiated_by_me;
-		bool operator==(const PeerConnection& other) const { return address == other.address && port == other.port && first_hand_information == other.first_hand_information && intitiated_by_me == other.intitiated_by_me; }
+		//bool intitiated_by_me;
+		// I already succeed to connect to this adress/port from these networks
+		std::vector<std::string> success_from;
+		bool operator==(const PeerConnection& other) const { return address == other.address && port == other.port && first_hand_information == other.first_hand_information && success_from == other.success_from; }
 	};
 	struct PeerData {
+		// the registered peer. may be in connection or connected.
+		PeerPtr peer;
 		PublicKey rsa_public_key;
 		SecretKey aes_key;
 		// The key is an ip (only the network part) and the value is the ip/adress where we succeffuly connect to it.
 		// If we never found a way to connect to it, it's empty.
-		std::map<std::string, std::vector<PeerConnection>> net2validAddress;
-		// the registered peer. may be in connection?
-		PeerPtr peer;
-		bool operator==(const PeerData& other) const { return peer == other.peer && rsa_public_key == other.rsa_public_key && aes_key == other.aes_key && net2validAddress == other.net2validAddress; }
+		std::vector<PeerConnection> public_interfaces;
+		std::optional<PeerConnection> private_interface;
+		bool operator==(const PeerData& other) const { return peer == other.peer && rsa_public_key == other.rsa_public_key && aes_key == other.aes_key 
+			&& public_interfaces == other.public_interfaces && private_interface == other.private_interface; }
 	};
 	enum ComputerIdState : uint8_t {
 		NOT_CHOOSEN = 0,
@@ -55,6 +59,9 @@ protected:
 	PrivateKey privateKey;
 	PublicKey publicKey;
 
+	// A fake peer to store our information
+	PeerPtr m_myself;
+
 	//database peers
 	mutable std::mutex loadedPeers_mutex;
 	std::vector<PeerPtr> loadedPeers;
@@ -65,7 +72,6 @@ protected:
 	PhysicalServer& serv;
 
 	ComputerIdState myComputerIdState = ComputerIdState::NOT_CHOOSEN;
-	uint16_t myComputerId = NO_COMPUTER_ID;
 	int64_t timeChooseId = 0;
 
 	std::unordered_map<uint64_t, std::string> peerId2emittedMsg;
@@ -76,16 +82,24 @@ protected:
 
 	void create_from_install_file(const std::filesystem::path& currrent_filepath);
 public:
-	IdentityManager(PhysicalServer& serv, const std::filesystem::path& filePath) : serv(serv), filepath(filePath) {}
+	IdentityManager(PhysicalServer& serv, const std::filesystem::path& filePath) : serv(serv), filepath(filePath) {
+		m_myself = Peer::create(serv, "", 0, Peer::ConnectionState::NO_STATE);
+	}
 
 	std::mutex& synchronize() { return db_file_mutex;  }
 
 	//getters
+	PeerPtr getSelfPeer() { return m_myself; }
 	uint64_t getClusterId() const { return clusterId; }
 	ComputerIdState getComputerIdState() const { return myComputerIdState; }
-	uint16_t getComputerId() const { return myComputerId; }
-	void setComputerId(uint16_t myNewComputerId, ComputerIdState newState) { myComputerId = myNewComputerId; myComputerIdState = newState; }
+	uint16_t getComputerId() const { return m_myself->getComputerId(); }
+	void setComputerId(uint16_t myNewComputerId, ComputerIdState newState) { m_myself->setComputerId(myNewComputerId) ; myComputerIdState = newState; }
+	/// <summary>
+	/// Return a copy of the list of loaded peers (from the stored file, and the data sent by the actual connected peers). Please don't modify the peers.
+	/// </summary>
+	/// <returns>a new vector of my peerPtr.</returns>
 	std::vector<PeerPtr> getLoadedPeers() { std::lock_guard lock{ loadedPeers_mutex };  return loadedPeers; }
+	PeerPtr getLoadedPeer(uint16_t cid);
 
 	uint64_t getTimeChooseId(){ return timeChooseId; }
 	PublicKey getPublicKey() const { return publicKey; }
@@ -139,7 +153,7 @@ public:
 	//fusion (or add) a connected peer to our lists 
 	void fusionWithConnectedPeer(PeerPtr peer);
 	// add an unconnected peer to our list of possible peers.
-	void addNewPeer(uint16_t computerId, const PeerData& data);
+	PeerPtr addNewPeer(uint16_t computerId, const PeerData& data);
 
 	//request->send->receive a public key from a peer
 	//void requestPublicKey(Peer& peer);

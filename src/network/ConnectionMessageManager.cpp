@@ -75,8 +75,10 @@ namespace supercloud{
         if (!sender->isAlive() || messageId == *UnnencryptedMessageType::CONNECTION_CLOSED) {
             {std::lock_guard lock{ status_mutex };
                 if (auto status_it = status.find(sender); status_it != status.end()) {
+                    bool was_connected = false;
                     if (status_it->second.recv == ConnectionStep::AES) {
                         this->m_connection_state.removeConnection(sender->getComputerId());
+                        was_connected = true;
                     } else if(status_it->second.recv > ConnectionStep::BORN) {
                         this->m_connection_state.abordConnection();
                     }
@@ -214,12 +216,19 @@ namespace supercloud{
                 log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_SERVER_AES_KEY");
                 bool valid = clusterManager->getIdentityManager().receiveAesKey(*sender, message);
                 if (valid && sender->isAlive()) { 
-                    setStatus(sender, ConnectionStep::AES);
-                    // set the connected flag.
+                    //update this manager status for this peer (track the connection progress)
+                    this->setStatus(sender, ConnectionStep::AES);
+                    //update the peer connection status (track the connectivity of a single peer)
                     // now other manager can emit message to the peer, and be notified by timers.
-                    sender->setConnected();
+                    {
+                        std::lock_guard lock{ sender->synchronize() };
+                        sender->setState((sender->getState() & ~Peer::ConnectionState::CONNECTING) | Peer::ConnectionState::CONNECTED);
+                    }
+                    //update the clusterManager connection status (track the connection of our computer to the network)
+                    // clusterManager.state.finishConnection(sender->getComputerId())
                     this->m_connection_state.finishConnection(sender->getComputerId());
-                    //notify them that it's 
+
+                    //notify peers that a connection is established.
                     clusterManager->propagateMessage(sender, *UnnencryptedMessageType::NEW_CONNECTION, ByteBuff{});
                 }
             }
@@ -316,7 +325,7 @@ namespace supercloud{
                         //wait a bit for the disconnect to be in effect
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                         //reconnect
-                        ptr->connectTo(address, port);
+                        ptr->connectTo(address, port, 0);
                     });
                     reconnectThread.detach();
                 }

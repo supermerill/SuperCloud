@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <mutex>
+#include <sstream>
 
 namespace supercloud{
 
@@ -72,6 +73,29 @@ namespace supercloud{
 	}
 	uint8_t rand_u8() {
 		return uint8_t(uni_u8(rng));
+	}
+
+	std::vector<std::string> split(const std::string& input, char delim) {
+		std::vector<std::string> result;
+		std::stringstream ss(input);
+		std::string item;
+
+		while (std::getline(ss, item, delim)) {
+			result.push_back(item);
+		}
+		return result;
+	}
+	std::string concatenate(const std::vector<std::string>& input, char delim) {
+		std::stringstream ss;
+		auto it = input.begin();
+		if (it != input.end()) {
+			ss << *it;
+			++it;
+			for (; it != input.end(); ++it) {
+				ss << delim << *it;
+			}
+		}
+		return ss.str();
 	}
 
 

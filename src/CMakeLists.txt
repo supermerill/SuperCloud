@@ -9,27 +9,27 @@ endif ()
 
 
 add_library(libsupercloud STATIC
+    network/BoostAsioNetwork.cpp
+    network/BoostAsioNetwork.hpp
     network/ClusterManager.hpp
     network/ConnectionMessageManagerInterface.hpp
-	network/ConnectionMessageManager.hpp
-	network/ConnectionMessageManager.cpp
-	network/ClusterAdminMessageManager.hpp
-	network/ClusterAdminMessageManager.cpp
+    network/ConnectionMessageManager.cpp
+    network/ConnectionMessageManager.hpp
+    network/ClusterAdminMessageManager.cpp
+    network/ClusterAdminMessageManager.hpp
+    network/IdentityManager.cpp
+    network/IdentityManager.hpp
+    network/NetworkAdapter.hpp
     network/Peer.cpp
     network/Peer.hpp
-	network/PhysicalServer.cpp
-	network/PhysicalServer.hpp
-	network/IdentityManager.cpp
-	network/IdentityManager.hpp
+    network/PhysicalServer.cpp
+    network/PhysicalServer.hpp
     utils/ByteBuff.cpp
     utils/ByteBuff.hpp
     utils/Utils.cpp
     utils/Utils.hpp
     utils/Parameters.cpp
     utils/Parameters.hpp
-#    fs/FileSystemManager.hpp
-#    fs/StandardManager.hpp
-#    fs/StandardManager.cpp
 )
 
 #encoding_check(libsupercloud)

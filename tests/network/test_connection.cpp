@@ -9,6 +9,7 @@
 
 #include "network/PhysicalServer.hpp"
 #include "network/IdentityManager.hpp"
+#include "network/BoostAsioNetwork.hpp"
 
 namespace supercloud::test {
 
@@ -70,6 +71,7 @@ namespace supercloud::test {
 	typedef std::shared_ptr<PhysicalServer> ServPtr;
 
 	ServPtr createPeer(std::filesystem::path& tmp_dir_path, const std::string& name, uint16_t listen_port = 0) {
+		if(!ServerSocket::factory) ServerSocket::factory.reset(new BoostAsioSocketFactory());
 
 		//create temp install dir
 		std::filesystem::create_directories(tmp_dir_path);

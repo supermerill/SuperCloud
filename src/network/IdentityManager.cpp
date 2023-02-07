@@ -47,6 +47,14 @@ namespace supercloud{
 	//	return this->privateKey;
 	//}
 
+	PeerPtr IdentityManager::getLoadedPeer(uint16_t cid) {
+		std::lock_guard lock{ loadedPeers_mutex };
+		for (PeerPtr& peer : this->loadedPeers) {
+			if (peer->getComputerId() == cid)
+				return peer;
+		}
+		return {};
+	}
 
 	IdentityManager::PeerData IdentityManager::getPeerData(uint16_t computer_id) const {
 		std::lock_guard lock(peer_data_mutex);
@@ -54,7 +62,6 @@ namespace supercloud{
 		if (it != id_2_peerdata.end()) {
 			return it->second;
 		}
-
 		return PeerData{};
 	}
 	bool IdentityManager::setPeerData(const PeerData& original, const PeerData& new_data) {
@@ -89,8 +96,7 @@ namespace supercloud{
 				passphrase = paramsNet.get("ClusterPassphrase");
 			}
 			if (paramsNet.has("PeerIp") && paramsNet.has("PeerPort")) {
-				//tcp::endpoint addr{ boost::asio::ip::address::from_string(paramsNet.get("PeerIp")), uint16_t(paramsNet.getInt("PeerPort")) };
-				PeerPtr p = Peer::create(serv, paramsNet.get("PeerIp"), uint16_t(paramsNet.getInt("PeerPort")));
+				PeerPtr p = Peer::create(serv, paramsNet.get("PeerIp"), uint16_t(paramsNet.getInt("PeerPort")), Peer::ConnectionState::LOADED_FROM_DB);
 				p->setComputerId((uint16_t)-1); // set it to <0 to let us know it's invalid
 				{ std::lock_guard lock{ loadedPeers_mutex };
 					loadedPeers.push_back(p);
@@ -135,34 +141,43 @@ namespace supercloud{
 		Parameters params_server_db{ currrent_filepath };
 		this->clusterId = params_server_db.getLong("clusterId");
 		this->myComputerIdState = (ComputerIdState)params_server_db.getInt("computerIdState");
-		this->myComputerId = (uint16_t)params_server_db.getInt("computerId");
+		this->m_myself->setComputerId((uint16_t)params_server_db.getInt("computerId"));
+		uint64_t old_peer_id = (uint64_t)params_server_db.getLong("peerId", NO_PEER_ID);
+		if (this->m_myself->getPeerId() == 0 || this->m_myself->getPeerId() == NO_PEER_ID) {
+			std::lock_guard lock{ this->m_myself->synchronize() };
+			this->m_myself->setPeerId(old_peer_id);
+			this->m_myself->setState(this->m_myself->getState() | Peer::ConnectionState::LOADED_FROM_DB);
+		}
 		this->passphrase = params_server_db.get("passphrase");
 		this->publicKey = params_server_db.get("publicKey");
 		this->privateKey = params_server_db.get("privateKey");
 		size_t nbPeers = size_t(params_server_db.getInt("nbPeers", 0));
+		//FIXME: isn't it more safe to ock the two locks? (but there is then a deadlock possibility...). Or maybe have only one lock?
 		{std::lock_guard lock(peer_data_mutex);
 			for (size_t i = 0; i < nbPeers; i++) {
-				const std::string& dist_ip = params_server_db.get("peer" + std::to_string(i) + "_ip");
-				uint16_t dist_port = uint16_t(params_server_db.getInt("peer" + std::to_string(i) + "_port"));
 				uint16_t dist_id = uint16_t(params_server_db.getInt("peer" + std::to_string(i) + "_id"));
-				const std::string& dist_pub_key = params_server_db.get("peer" + std::to_string(i) + "_publicKey");
-				PeerPtr p = Peer::create(serv, dist_ip, dist_port);
+				PeerPtr p = Peer::create(serv, "", 0, Peer::ConnectionState::LOADED_FROM_DB);
 				p->setComputerId(dist_id);
 				loaded_peers_copy.push_back(p);
 				PeerData& data = id_2_peerdata[dist_id];
-				data.rsa_public_key = dist_pub_key;
+				data.rsa_public_key = params_server_db.get("peer" + std::to_string(i) + "_publicKey");
+				const std::string& dist_ip = params_server_db.get("peer" + std::to_string(i) + "_ip");
+				uint16_t dist_port = uint16_t(params_server_db.getInt("peer" + std::to_string(i) + "_port"));
+				bool dist_conn_by_me = params_server_db.getBool("peer" + std::to_string(i) + "_succeed");
+				std::string dist_conn_from = params_server_db.get("peer" + std::to_string(i) + "_from");
+				//TODO save/get the "from";
+				if (dist_ip != "" || dist_port != 0) {
+					data.private_interface = PeerConnection{ dist_ip , dist_port, dist_conn_by_me, split(dist_conn_from, '$') };
+				} else {
+					data.private_interface.reset();
+				}
 				data.peer = p;
-				for (size_t idx_net2conn = 0; params_server_db.has("peer" + std::to_string(i) + "_con_" + std::to_string(idx_net2conn) + "_net"); ++idx_net2conn) {
-					std::vector<PeerConnection>& connections = data.net2validAddress[params_server_db.get("peer" + std::to_string(i) + "_con_" + std::to_string(idx_net2conn) + "_net")];
-					connections.clear();
-					for (size_t idx_addr = 0; params_server_db.has("peer" + std::to_string(i) + "_con_" + std::to_string(idx_net2conn) + "_" + std::to_string(idx_addr) + "_ip"); ++idx_addr) {
-						std::string connection_ip = params_server_db.get("peer" + std::to_string(i) + "_con_" + std::to_string(idx_net2conn) + "_" + std::to_string(idx_addr) + "_ip");
-						uint16_t connection_port = uint16_t(params_server_db.getInt("peer" + std::to_string(i) + "_con_" + std::to_string(idx_net2conn) + "_" + std::to_string(idx_addr) + "_port"));
-						if (connection_ip.size() > 2) {
-							// PeerConnection{address, first_hand_information, initiated_by_me }
-							connections.push_back(PeerConnection{ connection_ip.substr(2), connection_port, connection_ip[0] == '!', connection_ip[1] == 'O' });
-						}
-					}
+				for (size_t idx_net2conn = 0; params_server_db.has("peer" + std::to_string(i) + "_pub_" + std::to_string(idx_net2conn) + "_addr"); ++idx_net2conn) {
+					PeerConnection connection = data.public_interfaces.emplace_back();
+					connection.address = params_server_db.get("peer" + std::to_string(i) + "_pub_" + std::to_string(idx_net2conn) + "_addr");
+					connection.port = (uint16_t)params_server_db.getInt("peer" + std::to_string(i) + "_pub_" + std::to_string(idx_net2conn) + "_port");
+					connection.first_hand_information = params_server_db.getBool("peer" + std::to_string(i) + "_pub_" + std::to_string(idx_net2conn) + "_succeed");
+					connection.success_from = split(params_server_db.get("peer" + std::to_string(i) + "_pub_" + std::to_string(idx_net2conn) + "_from"), '$');
 				}
 			}
 		}
@@ -174,7 +189,10 @@ namespace supercloud{
 	void IdentityManager::save(const std::filesystem::path& filePath) const {
 		Parameters params_server_db{ filePath };
 		params_server_db.setLong("clusterId", this->clusterId);
-		params_server_db.setInt("computerId", this->myComputerId);
+		params_server_db.setInt("computerId", this->m_myself->getComputerId());
+		if (this->m_myself->getPeerId() != 0 && this->m_myself->getPeerId() != NO_PEER_ID) {
+			params_server_db.setInt("peerId", this->m_myself->getPeerId());
+		}
 		params_server_db.set("passphrase", this->passphrase);
 		params_server_db.set("publicKey", this->publicKey);
 		params_server_db.set("privateKey", this->privateKey);
@@ -186,30 +204,27 @@ namespace supercloud{
 		size_t peer_idx = 0;
 		{std::lock_guard<std::mutex> lockpdata(this->peer_data_mutex);
 			for (const PeerPtr& peer : loaded_peers_copy) {
-				params_server_db.set("peer" + std::to_string(peer_idx) + "_ip", peer->getIP());
-				params_server_db.setInt("peer" + std::to_string(peer_idx) + "_port", peer->getPort());
-				params_server_db.setInt("peer" + std::to_string(peer_idx) + "_id", peer->getComputerId());
 				auto found = id_2_peerdata.find(peer->getComputerId());
 				if (found != id_2_peerdata.end() && found->second.peer) {
+					params_server_db.setInt("peer" + std::to_string(peer_idx) + "_id", peer->getComputerId());
 					const PeerData& data = found->second;
 					params_server_db.set("peer" + std::to_string(peer_idx) + "_publicKey", data.rsa_public_key);
+					if (data.private_interface) {
+						params_server_db.set("peer" + std::to_string(peer_idx) + "_ip", data.private_interface->address);
+						params_server_db.setInt("peer" + std::to_string(peer_idx) + "_port", data.private_interface->port);
+						params_server_db.setBool("peer" + std::to_string(peer_idx) + "_succeed", data.private_interface->first_hand_information);
+						params_server_db.set("peer" + std::to_string(peer_idx) + "_from", concatenate(data.private_interface->success_from, '$'));
+					}
 					size_t idx_conn = 0;
-					for (const auto& net2ip : data.net2validAddress) {
-						params_server_db.set("peer" + std::to_string(peer_idx) + "_con_" + std::to_string(idx_conn) + "_net", net2ip.first);
-						size_t idx_addr = 0;
-						for (const PeerConnection& connection : net2ip.second) {
-							std::stringstream ss;
-							ss << connection.first_hand_information ? '!' : '?';
-							ss << connection.intitiated_by_me ? 'O' : 'X';
-							ss << connection.address;
-							params_server_db.set("peer" + std::to_string(peer_idx) + "_con_" + std::to_string(idx_conn) + "_" + std::to_string(idx_addr) + "_ip", ss.str());
-							params_server_db.setInt("peer" + std::to_string(peer_idx) + "_con_" + std::to_string(idx_conn) + "_" + std::to_string(idx_addr) + "_port", connection.port);
-							++idx_addr;
-						}
+					for (const PeerConnection& net_interface : data.public_interfaces) {
+						params_server_db.set("peer" + std::to_string(peer_idx) + "_pub_" + std::to_string(idx_conn) + "_addr", net_interface.address);
+						params_server_db.setInt("peer" + std::to_string(peer_idx) + "_pub_" + std::to_string(idx_conn) + "_port", net_interface.port);
+						params_server_db.setBool("peer" + std::to_string(peer_idx) + "_pub_" + std::to_string(idx_conn) + "_success", net_interface.first_hand_information);
+						params_server_db.set("peer" + std::to_string(peer_idx) + "_pub_" + std::to_string(idx_conn) + "_from", concatenate(net_interface.success_from, '$'));
 						++idx_conn;
 					}
 				} else {
-					params_server_db.set("peer" + std::to_string(peer_idx) + "_publicKey", "ERROR, CANT FIND");
+					params_server_db.set("peer" + std::to_string(peer_idx) + "_ERROR", "ERROR, CANT FIND DATA");
 				}
 				//relance
 				peer_idx++;
@@ -242,15 +257,14 @@ namespace supercloud{
 		}
 	}
 
-
-	void IdentityManager::addNewPeer(uint16_t computerId, const PeerData& data) {
+	PeerPtr IdentityManager::addNewPeer(uint16_t computerId, const PeerData& data) {
 		bool not_found = false;
 		PeerPtr new_peer;
 		{std::lock_guard lock{ loadedPeers_mutex };
 			//ensure it's not here
 			not_found = loadedPeers.end() == std::find_if(loadedPeers.begin(), loadedPeers.end(), [computerId](PeerPtr& p) {return computerId == p->getComputerId(); });
 			if (not_found) {
-				new_peer = Peer::create(serv, "", 0);
+				new_peer = Peer::create(serv, "", 0, Peer::ConnectionState::LOADED_FROM_DB);
 				new_peer->setComputerId(computerId);
 				loadedPeers.push_back(new_peer);
 			}
@@ -260,6 +274,7 @@ namespace supercloud{
 			id_2_peerdata[computerId] = data;
 			id_2_peerdata[computerId].peer = new_peer;
 		}
+		return new_peer;
 	}
 
 	//send our public key to the peer
@@ -333,7 +348,7 @@ namespace supercloud{
 		}
 
 		//don't emit myId if it's NO_COMPUTER_ID (-1)
-		if (myComputerId == NO_COMPUTER_ID) {
+		if (getComputerId() == NO_COMPUTER_ID) {
 			log(std::to_string(serv.getPeerId() % 100) + " (sendIdentity " + isRequest + ") but i have null id!! \n");
 			ByteBuff buff;
 			buff.putShort(NO_COMPUTER_ID);
@@ -351,7 +366,7 @@ namespace supercloud{
 		//Cipher cipher = Cipher.getInstance("RSA");
 		//cipher.init(Cipher.ENCRYPT_MODE, privateKey);
 		//ByteBuff buffEncoded = blockCipher(new ByteBuff().putShort(myComputerId).putUTF8(messageToEncrypt).putUTF8(passphrase).flip().toArray(), Cipher.ENCRYPT_MODE, cipher);
-		ByteBuff buffEncoded; buffEncoded.putShort(myComputerId).putUTF8(messageToEncrypt).putUTF8(passphrase).flip();
+		ByteBuff buffEncoded; buffEncoded.putShort(getComputerId()).putUTF8(messageToEncrypt).putUTF8(passphrase).flip();
 
 		//encrypt more
 		//cipher.init(Cipher.ENCRYPT_MODE, theirPubKey);
@@ -529,7 +544,7 @@ namespace supercloud{
 
 	void IdentityManager::requestSave() {
 		// save the current state into the file.
-		if (clusterId  || myComputerId == NO_COMPUTER_ID) return; //don't save if we are not registered on the server yet.
+		if (clusterId  || getComputerId() == NO_COMPUTER_ID) return; //don't save if we are not registered on the server yet.
 		// get synch
 		{ std::lock_guard<std::mutex> lock(this->save_mutex);
 			std::filesystem::path fic(filepath);

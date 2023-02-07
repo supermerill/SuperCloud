@@ -4,13 +4,11 @@
 #include <filesystem>
 #include <thread>
 #include <mutex>
-#include <boost/asio.hpp>
 
 #include "ClusterManager.hpp"
 #include "../utils/ByteBuff.hpp"
 #include "Peer.hpp"
-
-using boost::asio::ip::tcp;
+#include "networkAdapter.hpp"
 
 namespace supercloud {
 
@@ -46,7 +44,6 @@ namespace supercloud {
      */
     class PhysicalServer : public ClusterManager, public std::enable_shared_from_this<PhysicalServer>{
     protected:
-        uint64_t myPeerId = NO_PEER_ID;
         bool has_peer_id = false;
 
         ServerConnectionState m_state;
@@ -56,7 +53,7 @@ namespace supercloud {
         // private Semaphore peersSemaphore = new Semaphore(1);
         mutable std::recursive_mutex peers_mutex;
         PeerList peers; // don't access this outside of semaphore. Use getters instead.
-        std::unique_ptr<tcp::acceptor> mySocket; // server socket
+        std::shared_ptr<ServerSocket> m_listen_socket; // server socket
         //std::unique_ptr<std::thread> socketListener; //just a pointer to the detached thread handle.
         //std::unique_ptr<std::thread> updaterThread;
         bool hasSocketListener = false;
@@ -64,9 +61,9 @@ namespace supercloud {
 
         //pointer to other net managers
         //i'm the "owner" of these ones
-        std::shared_ptr<ConnectionMessageManager> connectionManager;
-        std::shared_ptr<ClusterAdminMessageManager> clusterAdminManager;
-        std::shared_ptr<IdentityManager> clusterIdMananger;
+        std::shared_ptr<ConnectionMessageManager> m_connection_manager;
+        std::shared_ptr<ClusterAdminMessageManager> m_cluster_admin_manager;
+        std::shared_ptr<IdentityManager> m_cluster_id_mananger;
 
         // each messageid has its vector of listeners
         mutable std::mutex listeners_mutex;
@@ -74,7 +71,7 @@ namespace supercloud {
 
 
         // for update() method
-        int64_t last_minute_update = 0;
+        int64_t m_last_minute_update = 0;
 
         /**
          * Init a connection with an other (hypothetical) peer.
@@ -84,9 +81,9 @@ namespace supercloud {
          * @throws InterruptedException
          * @throws IOException
          */
-        bool initConnection(PeerPtr peer, std::shared_ptr<tcp::socket> sock, bool initiated_by_me);
+        bool initConnection(PeerPtr peer, std::shared_ptr<Socket> sock, bool initiated_by_me);
 
-        PhysicalServer() : myPeerId(rand_u63()), has_peer_id(false) {}
+        PhysicalServer();
     public:
         //not private to allow tests
         static std::shared_ptr<PhysicalServer> createForTests() {
@@ -119,9 +116,9 @@ namespace supercloud {
         /// </summary>
         void init(uint16_t listenPort);
 
-        uint64_t getPeerId() const override { return myPeerId; }
+        uint64_t getPeerId() const override;
         void setPeerId(uint64_t new_peer_id);
-        bool hasPeerId() const { return has_peer_id && myPeerId != 0 && myPeerId != NO_PEER_ID; }
+        bool hasPeerId() const { return has_peer_id && getPeerId() != 0 && getPeerId() != NO_PEER_ID; }
         uint16_t getComputerId() const override;
 
         const ServerConnectionState& getState() { return m_state; }
@@ -148,7 +145,8 @@ namespace supercloud {
         /// </summary>
         /// <param name="ip">address</param>
         /// <param name="port">port</param>
-        void connect(const std::string& path, uint16_t port) override;
+        std::future<bool> connect(const std::string& path, uint16_t port, int64_t timeout_milis) override;
+
         /// <summary>
         /// Try to connect to a peer at this address/port.
         /// If the connection is successful, the thread will continue to listen to the socket until the end of it.
@@ -156,11 +154,11 @@ namespace supercloud {
         /// <param name="ip">address</param>
         /// <param name="port">port</param>
         /// <returns>false if the connection can't be establish</returns>
-        virtual bool connectTo(const std::string& ip, uint16_t port);
+        virtual bool connectTo(const std::string& ip, uint16_t port, int64_t timeout_milis, std::shared_ptr<std::promise<bool>> notify_socket_connection = {});
 
 
         uint16_t getListenPort() {
-            return mySocket ? mySocket->local_endpoint().port() : 0;
+            return m_listen_socket->endpoint().port();
             //return mySocket.getLocalPort();
         }
 
@@ -199,11 +197,6 @@ namespace supercloud {
         /// Close current connections (peers) and try to reconnect them
         /// </summary>
         bool reconnect() override;
-
-
-        tcp::endpoint getListening() override{
-            return mySocket ? mySocket->local_endpoint() : tcp::endpoint{};
-        }
 
         virtual void close() override;
 

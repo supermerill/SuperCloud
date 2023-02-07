@@ -5,6 +5,7 @@
 
 #include "utils/Parameters.hpp"
 #include "network/PhysicalServer.hpp"
+#include "network/BoostAsioNetwork.hpp"
 
 using namespace supercloud;
 
@@ -87,7 +88,8 @@ std::shared_ptr<PhysicalServer> createPeer2(const std::string& name, uint16_t li
 }
 
 int main(int argc, char* argv[]) {
-
+	ServerSocket::factory.reset(new BoostAsioSocketFactory());
+		
 	std::cout << "start main\n";
 	auto net = createPeer("peer1");
 

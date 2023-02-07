@@ -4,7 +4,6 @@
 #include <vector>
 #include <set>
 #include <string>
-#include <boost/asio.hpp>
 
 #include "../utils/Utils.hpp"
 #include "../utils/ByteBuff.hpp"
@@ -194,7 +193,7 @@ namespace supercloud {
 		 * @param port port
 		 * @return true if it's maybe connected, false if it's maybe not connected
 		 */
-		virtual void connect(const std::string& string, uint16_t port) = 0;
+		virtual std::future<bool> connect(const std::string& string, uint16_t port, int64_t timeout_milis) = 0;
 		
 		/// <summary>
 		/// Try to connect all peers in our database, in an async way
@@ -219,8 +218,6 @@ namespace supercloud {
 		 */
 		virtual uint16_t getComputerId(uint64_t senderId) const = 0; //get a computerId from a peerId (senderId)
 		virtual uint64_t getPeerIdFromCompId(uint16_t compId) const = 0; //get a peerId (senderId) from a computerId
-
-		virtual boost::asio::ip::tcp::endpoint getListening() = 0;
 
 		virtual IdentityManager& getIdentityManager() = 0;
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <boost/asio.hpp>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -9,8 +8,7 @@
 
 #include "../utils/ByteBuff.hpp"
 #include "../utils/Utils.hpp"
-
-using boost::asio::ip::tcp;
+#include "networkAdapter.hpp"
 
 namespace supercloud {
 
@@ -29,68 +27,6 @@ namespace supercloud {
 	public:
 		Peer(const Peer&) = delete;
 
-		class PeerKey {
-		private:
-			uint64_t otherPeerId = 0; //use for leader election, connection establishment
-			std::string address;
-			uint16_t port = 0;
-
-		public:
-			PeerKey(std::string inetAddress) : address(inetAddress) {
-			}
-
-			PeerKey(const std::string& address, int port) : address(address), port(port) {
-			}
-
-			//boolean equals(Object arg0) {
-			//	if (arg0 instanceof PeerKey) {
-			//		PeerKey o = (PeerKey)arg0;
-			//		if (o.address.equals(address)) {
-			//			if (o.port != 0 && port != 0) {
-			//				return o.port == port;
-			//			} else if (otherPeerId != 0 && o.otherPeerId != 0) {
-			//				return otherPeerId == o.otherPeerId;
-			//			}
-			//		}
-			//	}
-			//	return false;
-			//}
-
-			//@Override
-			//	public int hashCode() {
-			//	return address.hashCode();
-			//}
-
-			uint64_t getPeerId() const {
-				return otherPeerId;
-			}
-
-			const std::string& getAddress() const {
-				return address;
-			}
-
-			uint16_t getPort() const {
-				return port;
-			}
-
-			void setPeerId(uint64_t peerId) {
-				this->otherPeerId = peerId;
-			}
-			
-			void setPort(uint16_t port) {
-				this->port = port;
-			}
-
-			void setAdress(std::string& addr) {
-				this->address = addr;
-			}
-
-			std::string to_string() const {
-				return address + ":" + std::to_string(otherPeerId) + ":" + std::to_string(port);
-			}
-
-		};
-
 		enum CloseReason {
 			ALIVE,
 			BAD_SERVER_ID,
@@ -98,14 +34,30 @@ namespace supercloud {
 			NETWORK_FAIL,
 		};
 
+		enum ConnectionState : uint8_t {
+			NO_STATE = 0, // shouldn't happen, it should have at least an attribute
+			LOADED_FROM_DB = 1 << 0, // when created at startup from the db
+			CONNECTING = 1 << 1, // when the connection between me and this peer is started.
+			CONNECTED = 1 << 2, // when the connection between me and this peer is established, and we can exchange any msg.
+			ALIVE_IN_NETWORK = 1 << 3, // when (a peer tell me that) this peer is connected to the network
+			DISCONNECTED = 1 << 4, //  when a peer isn't connected to the nework, but may be still alive disconnected and may reconnect.
+			FROM_ME = 1 << 5, //  If i'm the one who initiate the connection.
+		};
+
 	private:
 		PhysicalServer& myServer;
 
 		// private Socket connexion;
 		// private InetSocketAddress address;
-		uint16_t distComputerId = NO_COMPUTER_ID; //unique id for the computer, private-public key protected.
-		PeerKey myKey;
-		std::shared_ptr<tcp::socket> socket = nullptr;
+		uint16_t m_computer_id = NO_COMPUTER_ID; //unique id for the computer, private-public key protected.
+		uint64_t m_peer_id = NO_PEER_ID; //use for leader election, connection establishment
+
+		std::string m_address;
+		uint16_t m_port = 0;
+		//if the connection is established, this exist and and be used to emit & receive message
+		std::shared_ptr<Socket> m_socket = nullptr;
+		// if we both emit connections to each other, this is the other (unused) connection.
+		std::shared_ptr<Socket> m_socket_wait_to_delete = nullptr;
 		//std::unique_ptr<std::istream> streamIn;
 		std::mutex socket_read_write_mutex;
 		//std::unique_ptr<std::ostream> streamOut;
@@ -127,12 +79,12 @@ namespace supercloud {
 
 
 		/// <summary>
-		/// The connection protocol has ended with success. evryone can now emit message to this peer.
+		/// Mutex for accesing-modify m_state, 
 		/// </summary>
-		bool connected = false;
-		bool is_initiator = false;
+		std::mutex m_peer_mutex;
 
-		std::shared_ptr<tcp::socket> sockWaitToDelete = nullptr;
+		ConnectionState m_state = ConnectionState::NO_STATE;
+		//TODO: use it (curently not set)
 		CloseReason close_reason = CloseReason::ALIVE;
 
 		std::atomic<bool> is_thread_running = false;
@@ -155,15 +107,15 @@ namespace supercloud {
 
 	protected:
 
-		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port) : myServer(physicalServer), myKey(PeerKey{ inetAddress, port }), createdAt(get_current_time_milis()) {}
+		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state) : m_state(state), myServer(physicalServer), m_address(inetAddress), m_port(port), createdAt(get_current_time_milis()) {}
 
 	public:
 		const int64_t createdAt;
 
 		//factory
-		[[nodiscard]] static PeerPtr create(PhysicalServer& physicalServer, const std::string& inetAddress, int port) {
+		[[nodiscard]] static PeerPtr create(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state) {
 			// Not using std::make_shared<Best> because the c'tor is private.
-			return std::shared_ptr<Peer>(new Peer(physicalServer, inetAddress, port));
+			return std::shared_ptr<Peer>(new Peer(physicalServer, inetAddress, port, state));
 		}
 
 		PeerPtr ptr() {
@@ -175,7 +127,7 @@ namespace supercloud {
 
 		void reconnect();
 
-		bool connect(std::shared_ptr<tcp::socket> sock, bool initiated_by_me);
+		bool connect(std::shared_ptr<Socket> sock, bool initiated_by_me);
 
 		void startListen();
 
@@ -184,68 +136,59 @@ namespace supercloud {
 
 		void readMessage();
 
-		//// functions calleds by messages ///////////////////////////////////////////////////////////////////
-		void setPeerId(uint64_t newId) {
-			myKey.setPeerId(newId);
+		//// getters  ///////////////////////////////////////////////////////////////////
+		void setPeerId(uint64_t new_id) {
+			m_peer_id = new_id;
 		}
 
 		PhysicalServer& getMyServer() {
 			return myServer;
 		}
 
-		//protected OutputStream getOut() {
-		//	return streamOut;
-		//}
-
-		//protected InputStream getIn() {
-		//	return streamIn;
-		//}
-
 		uint64_t getPeerId() const {
-			return myKey.getPeerId();
+			return m_peer_id;
 		}
 
 		std::string getIP() const {
-			return myKey.getAddress();
+			return m_address;
 		}
 
 		/// <summary>
-		/// Like get Ip but just the network part.
+		/// The local ip, with just the network part.
 		/// </summary>
 		/// <returns></returns>
-		std::string getIPNetwork() const;
+		std::string getLocalIPNetwork() const;
 
 		uint16_t getPort() const {
-			return myKey.getPort();
+			return m_port;
 		}
 
 		bool isAlive() const {
 			return alive.load();
 		}
 		bool initiatedByMe() {
-			return is_initiator;
+			return 0 != (getState() & ConnectionState::FROM_ME);
 		}
 
 		void setPort(uint16_t port) {
-			if (myKey.getPort() != port) {
-				myKey.setPort(port);
-			}
+			m_port = port;
 		}
 
-		const PeerKey& getKey() const {
-			return myKey;
-		}
+		std::mutex& synchronize() { return m_peer_mutex; }
+		ConnectionState getState() { return m_state; }
+		// Should be changed to a thread-safe compare&swap but not worth the hassle. so:
+		// !! Use the synchronize() before calling getState and then setState, or even setState alone.
+		void setState(ConnectionState new_state) { m_state = new_state; }
+		bool isConnected() { return 0 != (m_state & Peer::ConnectionState::CONNECTED); }
 
-		void setConnected() { connected = true; }
-		bool isConnected() { return connected; }
 		void close();
 
-		void setComputerId(uint16_t distId) {
-			this->distComputerId = distId;
+		void setComputerId(uint16_t cid) {
+			this->m_computer_id = cid;
 		}
 
 		uint16_t getComputerId() const {
-			return distComputerId;
+			return m_computer_id;
 		}
 
 	};
@@ -303,6 +246,26 @@ namespace supercloud {
 		}
 
 	};
+
+
+	inline Peer::ConnectionState operator|(Peer::ConnectionState a, Peer::ConnectionState b) {
+		return static_cast<Peer::ConnectionState>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+	}
+	inline Peer::ConnectionState operator&(Peer::ConnectionState a, Peer::ConnectionState b) {
+		return static_cast<Peer::ConnectionState>(static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
+	}
+	inline Peer::ConnectionState operator^(Peer::ConnectionState a, Peer::ConnectionState b) {
+		return static_cast<Peer::ConnectionState>(static_cast<uint8_t>(a) ^ static_cast<uint8_t>(b));
+	}
+	inline Peer::ConnectionState operator~(Peer::ConnectionState a) {
+		return static_cast<Peer::ConnectionState>(~static_cast<uint8_t>(a));
+	}
+	inline Peer::ConnectionState operator|=(Peer::ConnectionState& a, Peer::ConnectionState b) {
+		a = a | b; return a;
+	}
+	inline Peer::ConnectionState operator&=(Peer::ConnectionState& a, Peer::ConnectionState b) {
+		a = a & b; return a;
+	}
 
 } // namespace supercloud
 
