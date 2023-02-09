@@ -88,12 +88,13 @@ public:
 
 	std::mutex& synchronize() { return db_file_mutex;  }
 
+	std::string msg = "";
 	//getters
 	PeerPtr getSelfPeer() { return m_myself; }
 	uint64_t getClusterId() const { return clusterId; }
 	ComputerIdState getComputerIdState() const { return myComputerIdState; }
 	uint16_t getComputerId() const { return m_myself->getComputerId(); }
-	void setComputerId(uint16_t myNewComputerId, ComputerIdState newState) { m_myself->setComputerId(myNewComputerId) ; myComputerIdState = newState; }
+	void setComputerId(uint16_t myNewComputerId, ComputerIdState newState);
 	/// <summary>
 	/// Return a copy of the list of loaded peers (from the stored file, and the data sent by the actual connected peers). Please don't modify the peers.
 	/// </summary>

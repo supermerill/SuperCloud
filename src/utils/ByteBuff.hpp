@@ -10,7 +10,7 @@ namespace supercloud {
 
 	class ByteBuff
 	{
-	private:
+	protected:
 		//private static final Charset UTF8 = Charset.forName("UTF-8");
 		size_t m_position = 0;
 		size_t m_limit = 0;
@@ -89,15 +89,21 @@ namespace supercloud {
 		void expand(const size_t size);
 
 
-		size_t position() { return m_position; }
+		size_t position() const { return m_position; }
 		ByteBuff& position(const size_t newPosition) { this->m_position = newPosition; return *this; }
+
+		/// <summary>
+		/// Available bytes for get/read.
+		/// </summary>
+		/// <returns>limit() - position()</returns>
+		size_t available() const { return m_limit-m_position; }
 
 		/**
 		 * Get the limit, the limit is only used for create().
 		 *
 		 * @return the limit
 		 */
-		size_t limit() { return m_limit; }
+		size_t limit() const { return m_limit; }
 
 		/**
 		 * Set the limit, the limit is only used for create().

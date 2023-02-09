@@ -1,5 +1,5 @@
 
-//#define CATCH_CONFIG_DISABLE
+#define CATCH_CONFIG_DISABLE
 
 //#include <catch_main.hpp> // main is in test_connection
 #include <catch2/catch.hpp>

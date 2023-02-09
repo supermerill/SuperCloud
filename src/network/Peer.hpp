@@ -59,7 +59,8 @@ namespace supercloud {
 		// if we both emit connections to each other, this is the other (unused) connection.
 		std::shared_ptr<Socket> m_socket_wait_to_delete = nullptr;
 		//std::unique_ptr<std::istream> streamIn;
-		std::mutex socket_read_write_mutex;
+		std::mutex socket_read_mutex;
+		std::mutex socket_write_mutex;
 		//std::unique_ptr<std::ostream> streamOut;
 
 		/// <summary>

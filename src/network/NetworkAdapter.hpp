@@ -35,10 +35,10 @@ namespace supercloud {
         EndPoint(std::string addr, uint16_t port) : m_address(addr), m_port(port) {}
         EndPoint(const EndPoint&) = default;
         EndPoint& operator=(const EndPoint&) = default;
-        std::string address() {
+        std::string address() const{
             return m_address;
         }
-        uint16_t port() {
+        uint16_t port() const{
             return m_port;
         };
     };
@@ -99,7 +99,7 @@ namespace supercloud {
     public:
         ServerSocket(const ServerSocket&) = delete; // can't copy
         ServerSocket& operator=(const ServerSocket&) = delete; // can't copy
-        virtual void init(uint16_t port) { m_endpoint = EndPoint{ "", port }; };
+        virtual void init(uint16_t port) { m_endpoint = EndPoint{ m_endpoint.address(), port }; };
         virtual EndPoint endpoint() { return m_endpoint; }
         virtual std::shared_ptr<Socket> listen() = 0;
         virtual std::shared_ptr<Socket> client_socket(const EndPoint& to) = 0;

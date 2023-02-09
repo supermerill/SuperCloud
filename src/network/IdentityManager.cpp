@@ -33,6 +33,10 @@ namespace supercloud{
 			this->publicKey.push_back(rand_u8());
 		}
 		this->privateKey = this->publicKey;
+		// this->publicKey is just a cache for id_2_peerdata[getComputerId()].rsa_public_key
+		{std::lock_guard lock(peer_data_mutex);
+			id_2_peerdata[getComputerId()].rsa_public_key = this->publicKey;
+		}
 	}
 
 	//PrivateKey IdentityManager::createPrivKey(const std::vector<uint8_t>& datas) {
@@ -151,6 +155,9 @@ namespace supercloud{
 		this->passphrase = params_server_db.get("passphrase");
 		this->publicKey = params_server_db.get("publicKey");
 		this->privateKey = params_server_db.get("privateKey");
+		{std::lock_guard lock(peer_data_mutex);
+			id_2_peerdata[getComputerId()].rsa_public_key = this->publicKey;
+		}
 		size_t nbPeers = size_t(params_server_db.getInt("nbPeers", 0));
 		//FIXME: isn't it more safe to ock the two locks? (but there is then a deadlock possibility...). Or maybe have only one lock?
 		{std::lock_guard lock(peer_data_mutex);
@@ -191,7 +198,7 @@ namespace supercloud{
 		params_server_db.setLong("clusterId", this->clusterId);
 		params_server_db.setInt("computerId", this->m_myself->getComputerId());
 		if (this->m_myself->getPeerId() != 0 && this->m_myself->getPeerId() != NO_PEER_ID) {
-			params_server_db.setInt("peerId", this->m_myself->getPeerId());
+			params_server_db.setLong("peerId", this->m_myself->getPeerId());
 		}
 		params_server_db.set("passphrase", this->passphrase);
 		params_server_db.set("publicKey", this->publicKey);
@@ -294,7 +301,7 @@ namespace supercloud{
 	}
 
 	void IdentityManager::receivePublicKey(Peer& sender, ByteBuff& buffIn) {
-		log(std::to_string(serv.getPeerId() % 100) + " (receivePublicKey) receive SEND_SERVER_PUBLIC_KEY from " + sender.getPeerId() % 100+"\n");
+		//log(std::to_string(serv.getPeerId() % 100) + " (receivePublicKey) receive SEND_SERVER_PUBLIC_KEY from " + sender.getPeerId() % 100+"\n");
 		
 		//get pub Key
 		size_t nbBytes = buffIn.getSize();
@@ -399,7 +406,7 @@ namespace supercloud{
 	}
 
 	IdentityManager::Identityresult IdentityManager::answerIdentity(Peer& peer, ByteBuff& buffIn) {
-		log(std::to_string(serv.getPeerId() % 100) + " (answerIdentity) receive GET_IDENTITY to " + peer.getPeerId() % 100+"\n");
+		//log(std::to_string(serv.getPeerId() % 100) + " (answerIdentity) receive GET_IDENTITY to " + peer.getPeerId() % 100+"\n");
 
 
 		PublicKey theirPubKey = "";
@@ -441,7 +448,7 @@ namespace supercloud{
 	}
 
 	IdentityManager::Identityresult IdentityManager::receiveIdentity(PeerPtr peer, ByteBuff& message) {
-		log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) receive SEND_IDENTITY to " + peer->getPeerId() % 100+"\n");
+		//log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) receive SEND_IDENTITY to " + peer->getPeerId() % 100+"\n");
 
 
 		PublicKey theirPubKey = "";
@@ -561,6 +568,24 @@ namespace supercloud{
 			if (exists) std::filesystem::rename(fic, ficBak);
 			// rename file
 			std::filesystem::rename(ficTemp, fic);
+		}
+
+	}
+
+
+
+	void IdentityManager::setComputerId(uint16_t myNewComputerId, ComputerIdState newState) {
+		//move our peerdata
+		{std::lock_guard lock{ this->peer_data_mutex };
+		uint16_t old = getComputerId();
+			assert(id_2_peerdata.find(myNewComputerId) == id_2_peerdata.end());
+			id_2_peerdata[myNewComputerId] = id_2_peerdata[getComputerId()];
+			id_2_peerdata.erase(getComputerId());
+			msg = std::string("moved from ") + getComputerId() +" to "+ myNewComputerId;
+			m_myself->setComputerId(myNewComputerId);
+			myComputerIdState = newState;
+			//log(std::to_string(myNewComputerId) + " setComputerId: from " + old + " to " + myNewComputerId+" :> "
+			//+(id_2_peerdata.find(old) == id_2_peerdata.end())+ ":"+ (id_2_peerdata.find(myNewComputerId) != id_2_peerdata.end())+":"+ id_2_peerdata.find(myNewComputerId)->);
 		}
 
 	}

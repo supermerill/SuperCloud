@@ -364,6 +364,7 @@ ByteBuff& ByteBuff::putSize(const uint64_t num) {
         //use putULong after the marker byte.
         put(uint8_t(0xFF));
         putULong(num);
+        return *this;
     }
 }
 uint64_t ByteBuff::getSize() {
@@ -563,8 +564,8 @@ ByteBuff& ByteBuff::reset() {
  * @return uint8_t[]
  */
 //uint8_t* toArray() {
-//    readcheck(limit() - this->m_position());
-//    uint8_t[] newBuff = new uint8_t[limit() - this->m_position()];
+//    readcheck.available());
+//    uint8_t[] newBuff = new uint8_t.available()];
 //    System.arraycopy(this->m_buffer, this->m_position, newBuff, 0, limit - this->m_position);
 //    return newBuff;
 //}

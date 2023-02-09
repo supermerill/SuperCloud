@@ -39,7 +39,7 @@ namespace supercloud{
 		return id2str[type];
 	}
 
-	std::mutex stdout_mutex;
+	std::recursive_mutex stdout_mutex;
 	void error(std::string str) { 
 		std::lock_guard lock(stdout_mutex);  
 		std::cerr << str; 
@@ -55,6 +55,10 @@ namespace supercloud{
 #else
 	void log(std::string str) {}
 #endif
+
+	std::recursive_mutex* loglock() {
+		return &stdout_mutex;
+	}
 
 
 	// RANDOM=============================

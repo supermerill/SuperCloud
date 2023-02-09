@@ -11,7 +11,7 @@ namespace supercloud {
 
     void BoostAsioSocket::write(ByteBuff& buffer) {
         boost::system::error_code error_code;
-        boost::asio::write(m_socket, boost::asio::buffer(buffer.raw_array() + buffer.position(), buffer.limit() - buffer.position()), error_code);
+        boost::asio::write(m_socket, boost::asio::buffer(buffer.raw_array() + buffer.position(), buffer.available()), error_code);
         buffer.position(buffer.limit());
         if (error_code) {
             throw write_error{ std::string("Error when writing :") + error_code.value() + " " + error_code.message() };
@@ -20,7 +20,7 @@ namespace supercloud {
 
     size_t BoostAsioSocket::read(ByteBuff& buffer) {
         boost::system::error_code error_code;
-        size_t bytesRead = boost::asio::read(m_socket, boost::asio::buffer(buffer.raw_array() + buffer.position(), buffer.limit() - buffer.position()), error_code);
+        size_t bytesRead = boost::asio::read(m_socket, boost::asio::buffer(buffer.raw_array() + buffer.position(), buffer.available()), error_code);
         if (error_code) {
             throw read_error{ std::string("Error when reading :") + error_code.value() + " " + error_code.message() };
         }
@@ -40,6 +40,7 @@ namespace supercloud {
             };
         }
         catch (std::exception e) {
+            // maybe https://github.com/boostorg/asio/issues/328
             error("Error, this network don't allow remote_endpoint()");
         }
         return { "",0 };
@@ -57,8 +58,14 @@ namespace supercloud {
                 //i may be able to get it.... TODO:
             } else if (m_socket.remote_endpoint().address().is_v4() && std::count(network.begin(), network.end(), '.') == 3) {
                 //seems ipv4
-                //we guess a /24 network
-                network = network.substr(0, network.find_last_of('.'));
+                if (m_socket.remote_endpoint().address().to_v4().is_class_a()) {
+                    network = network.substr(0, network.find_first_of('.'));
+                } else {
+                    network = network.substr(0, network.find_last_of('.'));
+                    if (m_socket.remote_endpoint().address().to_v4().is_class_b()) {
+                        network = network.substr(0, network.find_last_of('.'));
+                    }
+                }
                 //TODO use this->socket->remote_endpoint().address().to_v4().netmask
             } else if (size_t nb_delim = std::count(network.begin(), network.end(), ':'); nb_delim > 1 && m_socket.remote_endpoint().address().is_v6()) {
 
@@ -79,7 +86,39 @@ namespace supercloud {
             return network;
         }
         catch (std::exception e) {
-            error("Error, this network don't allow remote_endpoint()");
+            //error("Error, this network don't allow remote_endpoint()");
+            //retry with local endpoint
+            std::string network = m_socket.local_endpoint().address().to_string();
+            if (std::count(network.begin(), network.end(), '/') == 1 && false) {
+                //i may be able to get it.... TODO:
+            } else if (m_socket.local_endpoint().address().is_v4() && std::count(network.begin(), network.end(), '.') == 3) {
+                //seems ipv4
+                if (m_socket.local_endpoint().address().to_v4().is_class_a()) {
+                    network = network.substr(0, network.find_first_of('.'));
+                } else {
+                    network = network.substr(0, network.find_last_of('.'));
+                    if (m_socket.local_endpoint().address().to_v4().is_class_b()) {
+                        network = network.substr(0, network.find_last_of('.'));
+                    }
+                }
+                //TODO use this->socket->remote_endpoint().address().to_v4().netmask
+            } else if (size_t nb_delim = std::count(network.begin(), network.end(), ':'); nb_delim > 1 && m_socket.local_endpoint().address().is_v6()) {
+
+                //seems ipv6
+                // we remove the last 4 groups
+                if (nb_delim == 7) {
+                    network = network.substr(0, network.find_last_of(':'));
+                    network = network.substr(0, network.find_last_of(':'));
+                    network = network.substr(0, network.find_last_of(':'));
+                    network = network.substr(0, network.find_last_of(':'));
+                } else {
+                    //??
+                    network = network.substr(0, network.find_last_of(':'));
+                }
+            } else {
+                //other...
+            }
+            return network;
         }
         return "";
     }

@@ -144,7 +144,7 @@ namespace supercloud {
 		//	log(std::string("Warn : emit null message, id :") + int32_t(messageId)+" : "+messageId_to_string(messageId));
 		//}
 
-		size_t encodedMsgLength = message.limit() - message.position();
+		size_t encodedMsgLength = message.available();
 
 		ByteBuff fullData;
 		fullData.put(uint8_t(5))
@@ -159,7 +159,7 @@ namespace supercloud {
 		fullData.put(message);
 		fullData.flip();
 		log(std::to_string( this->myServer.getPeerId() % 100 ) + " write socket: " + m_socket->is_open() + "\n");
-		{ std::lock_guard lock_socket{ socket_read_write_mutex };
+		{ std::lock_guard lock_socket{ socket_write_mutex };
 			if (isConnected() || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
 				m_socket->write(fullData);
 			}
@@ -167,7 +167,7 @@ namespace supercloud {
 		if (message.position() != 0) {
 			msg(std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
 		}
-		msg(std::string("WRITE PRIORITY MESSAGE : ") + messageId + " : " + (message.position() >= message.limit() ? "null" : ""+(message.limit() - message.position())));
+		msg(std::string("WRITE PRIORITY MESSAGE : ") + messageId + " : " + (message.position() >= message.limit() ? "null" : ""+(message.available())));
 		
 	}
 
@@ -180,29 +180,30 @@ namespace supercloud {
 		Sleep(1000 + this->myServer.getPeerId() % 200 + rand_u8());
 #endif
 		
-		//if (message.limit() - message.position() <= 0) {
+		//if (message.available() <= 0) {
 		//	msg(std::string("Warn : emit null message, id :") + int32_t(messageId) + " : " + messageId_to_string(messageId));
 		//}
 		//try {
 
 			//encode mesage
 			//if (encoder == null) encoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.ENCRYPT_MODE);
+			size_t available = message.available();
 			uint8_t* encodedMsg = nullptr;
 			size_t encodedMsgLength = 0;
 			if (messageId > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
 				if (this->isConnected()) {
-					if (message.limit() - message.position() > 0) {
+					if (message.available() > 0) {
 						//encodedMsg = encoder.doFinal(message.array(), message.position(), message.limit());
 						// TODO: naive cipher: xor with a passphrase
 						encodedMsg = message.raw_array() + message.position();
-						encodedMsgLength = size_t(message.limit()) - message.position();
+						encodedMsgLength = size_t(message.available());
 					}
 				} else {
 					std::cout<<"Error, tried to send a " << messageId << " message when we don't have a aes key!\n";
 					return;
 				}
 			} else {
-				if (message.limit() - message.position() > 0) {
+				if (message.available() > 0) {
 					encodedMsg = message.raw_array() + message.position();
 					encodedMsgLength = size_t(message.limit()) - message.position();
 				}
@@ -223,7 +224,7 @@ namespace supercloud {
 				fullData.put(encodedMsg, encodedMsgLength);
 			}
 			fullData.flip();
-			{ std::lock_guard lock_socket{ socket_read_write_mutex };
+			{ std::lock_guard lock_socket{ socket_write_mutex };
 				if (isConnected() || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
 					m_socket->write(fullData);
 				}
@@ -232,7 +233,10 @@ namespace supercloud {
 				msg(std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
 			}
 			log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) 
-				+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.limit() - message.position())));
+				+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.available())));
+
+			// update to buffer position, like if we've done all get()
+			message.position(message.limit());
 		//}
 		//catch (std::exception e) {
 		//	std::cerr << std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100)<<  " ERROR: " << e.what() << "\n";
@@ -253,7 +257,7 @@ namespace supercloud {
 			int nb5 = 0;
 			do {
 
-				{ std::lock_guard lock_socket{ socket_read_write_mutex };
+				{ std::lock_guard lock_socket{ socket_read_mutex };
 					size_read = m_socket->read(buffer_one_byte.rewind());
 					byte_read = buffer_one_byte.flip().get();
 				}
@@ -273,7 +277,7 @@ namespace supercloud {
 			// read messagetype
 			//log(std::to_string( this->myServer.getPeerId() % 100 ) << " read type socket: " << socket->is_open() << "\n";
 			uint8_t same_byte;
-			{ std::lock_guard lock_socket{ socket_read_write_mutex };
+			{ std::lock_guard lock_socket{ socket_read_mutex };
 				size_read = m_socket->read(buffer_one_byte.rewind());
 				byte_read = buffer_one_byte.flip().get();
 				if (!this->alive) { return; }
@@ -299,7 +303,7 @@ namespace supercloud {
 			try {
 				ByteBuff buff_8bytes(8);
 				//streamIn->read((char*)buffIn.raw_array(), 8);
-				{ std::lock_guard lock_socket{ socket_read_write_mutex };
+				{ std::lock_guard lock_socket{ socket_read_mutex };
 					size_read = m_socket->read(buff_8bytes);
 					buff_8bytes.flip();
 					if (!this->alive) { return; }
@@ -321,7 +325,7 @@ namespace supercloud {
 					//while mandatory, because it's not a buffered stream.
 					while (pos < message_size) {
 						//pos += streamIn->readsome((char*)buffIn.raw_array() + pos, nbBytes - pos);
-						{ std::lock_guard lock_socket{ socket_read_write_mutex };
+						{ std::lock_guard lock_socket{ socket_read_mutex };
 							pos += m_socket->read(buff_message);
 							buff_message.flip();
 						}
@@ -340,18 +344,19 @@ namespace supercloud {
 				size_t decodedMsgLength = 0;
 				if (byte_read > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
 					if (this->isConnected()) {
-						if (buff_message.position() < buff_message.limit() && message_size > 0 && buff_message.limit() - buff_message.position() > 0) {
+						if (buff_message.position() < buff_message.limit() && message_size > 0 && buff_message.available() > 0) {
 							//decodedMsg = decoder.doFinal(buffIn.raw_array(), buffIn.position(), buffIn.limit());
 							// TODO: naive xor
 							//put decoded message into the read buffer
-							buff_message.reset().put(decodedMsg, decodedMsgLength).rewind();
+							//buff_message.reset().put(decodedMsg, decodedMsgLength).rewind();
+							//but for now, leave it untouched.
 						}
 					} else {
 						error(std::string("Error, try to receive a ") + messageId_to_string(byte_read) + " message when we don't have a aes key!");
 						return;
 					}
 				}//else : nothing to do, it's not encoded
-				log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " Read message " + int32_t(byte_read)+" : " + messageId_to_string(byte_read));
+				//log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " Read message " + int32_t(byte_read)+" : " + messageId_to_string(byte_read));
 				//use message
 				if (byte_read == *UnnencryptedMessageType::PRIORITY_CLEAR) {
 					byte_read = buff_message.get();
@@ -402,7 +407,7 @@ namespace supercloud {
 
 		}
 		//stay connected until the CONNECTION_CLOSED is finished, just before deleting the sockets
-		{ std::lock_guard lock_socket{ socket_read_write_mutex };
+		{ std::lock_guard lock_socket{ socket_write_mutex };
 
 			//close the socket
 			try {

@@ -90,12 +90,13 @@ namespace supercloud {
        
         //clean peer list
         {std::lock_guard lock(this->peers_mutex);
-            log(std::to_string(getPeerId() % 100) + " ======== peers =======");
-            for (PeerPtr& p : this->peers) {
-                log(std::to_string(getPeerId() % 100) + " " + p->getIP() + ":" + p->getPort() + " cid=" + p->getComputerId() + " pid=" + (p->getPeerId() % 100) + p->isAlive());
+            {std::lock_guard logl{ *loglock() };
+                log(std::to_string(getPeerId() % 100) + " ======== peers =======");
+                for (PeerPtr& p : this->peers) {
+                    log(std::to_string(getPeerId() % 100) + " pid=" + (p->getPeerId() % 100) +" ip=" + p->getIP() + ":" + p->getPort() + " cid=" + p->getComputerId() + " alive:"+ p->isAlive());
+                }
+                log(std::to_string(getPeerId() % 100) + " ======================");
             }
-            log(std::to_string(getPeerId() % 100) + " ======================");
-
             //remove bad peers
             for (auto itPeers = custom::it{ peers }; itPeers.has_next();) {
                 PeerPtr& nextP = itPeers.next();
@@ -343,10 +344,13 @@ namespace supercloud {
             if (timeout_milis > 0) {
                 //wait but only for timeout_milis;
                 std::future_status result = connect_end.wait_for(std::chrono::milliseconds(timeout_milis));
-                if (!new_socket->is_open()) {
-                    new_socket->cancel();
-                    goto return_false;
-                }
+            }else{
+                //wait
+                connect_end.wait();
+            }
+            if (!new_socket->is_open()) {
+                new_socket->cancel();
+                goto return_false;
             }
             if (notify_socket_connection) {
                 has_emmitted_promise = true;
@@ -431,7 +435,7 @@ namespace supercloud {
                 uint16_t port = oldp->getPort();
                 std::shared_ptr<PhysicalServer> me = ptr();
                 std::thread updaterThread([me, path, port]() {
-                    me->connectTo(path, port, 0, {});
+                    me->connectTo(path, port, 2000, {});
                     });
                 updaterThread.detach();
             }

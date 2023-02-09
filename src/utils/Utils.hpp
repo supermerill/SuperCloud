@@ -31,11 +31,28 @@ namespace std{
 			condition_.notify_one();
 		}
 
+		void release(size_t number) {
+			std::lock_guard<decltype(mutex_)> lock(mutex_);
+			count_ += number;
+			condition_.notify_all();
+		}
+
 		void acquire() {
 			std::unique_lock<decltype(mutex_)> lock(mutex_);
 			while (!count_) // Handle spurious wake-ups.
 				condition_.wait(lock);
 			--count_;
+		}
+
+		void acquire(size_t number) {
+			std::unique_lock<decltype(mutex_)> lock(mutex_);
+			while (number > 0) {
+				while (!count_) // Handle spurious wake-ups.
+					condition_.wait(lock);
+				size_t removed_count = std::min(number, count_);
+				number -= removed_count;
+				count_ -= removed_count;
+			}
 		}
 
 		bool try_acquire() {
@@ -214,6 +231,7 @@ namespace supercloud{
 	void error(std::string str);
 	void msg(std::string str);
 	void log(std::string str);
+	std::recursive_mutex* loglock();
 
 	class operation_not_implemented : public std::runtime_error
 	{

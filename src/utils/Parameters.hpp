@@ -22,6 +22,8 @@ namespace supercloud {
 		Parameters(const std::filesystem::path& path) : filepath(path){
 			reload();
 		}
+		Parameters(const Parameters&) = default;
+		Parameters& operator=(const Parameters&) = default;
 
 		void reload() {
 			//try {

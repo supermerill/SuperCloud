@@ -87,14 +87,15 @@ namespace supercloud{
             }
             return;
         }
-        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive message " + messageId+" : " + messageId_to_string(messageId) + "(ConnectionMessageManager)");
+        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive message " + messageId+" : " + messageId_to_string(messageId) + "(ConnectionMessageManager)");
         if (messageId == *UnnencryptedMessageType::GET_SERVER_ID) {
             // special case, give the peer object directly.
-            log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + "read GET_SERVER_ID : now sending my peerId");
+            log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) read GET_SERVER_ID : now sending my peerId");
             sender->writeMessage(*UnnencryptedMessageType::SEND_SERVER_ID, create_SEND_SERVER_ID_msg(
                 Data_SEND_SERVER_ID{ clusterManager->getPeerId() , clusterManager->getIdentityManager().getClusterId() , clusterManager->getListenPort() }));
         }
         if (messageId == *UnnencryptedMessageType::SEND_SERVER_ID) {
+            //log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + "read GET_SERVER_ID : now sending my peerId");
             // add it to the map, if not already here
             if (status.find(sender) == status.end()) { status[sender].recv = ConnectionStep::BORN; }
             Data_SEND_SERVER_ID data_msg = get_SEND_SERVER_ID_msg(message);
@@ -114,7 +115,7 @@ namespace supercloud{
                     << clusterManager->getIdentityManager().getClusterId() << " => closing connection\n";
                 sender->close();
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " read SEND_SERVER_ID : get their id: " + sender->getPeerId());
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) read SEND_SERVER_ID : get their id: " + sender->getPeerId());
 
                 setStatus(sender, ConnectionStep::ID);
                 //ask for next step
@@ -134,7 +135,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::ID) { // still don't have your id, please give them to me beforehand
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_SERVER_LIST");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_SERVER_LIST");
                 Data_SEND_SERVER_LIST data_msg = get_SEND_SERVER_LIST_msg(message);
                 //now choose computer & peer id
                 chooseComputerId(data_msg.registered_computer_id, data_msg.connected_computer_id);
@@ -150,7 +151,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::SERVER_LIST) {
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive GET_SERVER_PUBLIC_KEY");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive GET_SERVER_PUBLIC_KEY");
                 clusterManager->getIdentityManager().sendPublicKey(*sender);
             }
         }
@@ -158,7 +159,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::SERVER_LIST) {
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_SERVER_PUBLIC_KEY");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_SERVER_PUBLIC_KEY");
                 clusterManager->getIdentityManager().receivePublicKey(*sender, message);
                 if (sender->isAlive()) { setStatus(sender, ConnectionStep::RSA); }
                 //ask for next step
@@ -169,7 +170,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::RSA) {
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive GET_VERIFY_IDENTITY");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive GET_VERIFY_IDENTITY");
                 IdentityManager::Identityresult result = clusterManager->getIdentityManager().answerIdentity(*sender, message);
                 if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
@@ -187,7 +188,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::RSA) {
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_VERIFY_IDENTITY");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_VERIFY_IDENTITY");
                 IdentityManager::Identityresult result = clusterManager->getIdentityManager().receiveIdentity(sender, message);
                 if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
@@ -205,7 +206,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::IDENTITY_VERIFIED) {
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive GET_SERVER_AES_KEY");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive GET_SERVER_AES_KEY");
                 clusterManager->getIdentityManager().sendAesKey(*sender, IdentityManager::AES_PROPOSAL);
             }
         }
@@ -213,7 +214,7 @@ namespace supercloud{
             if (status[sender].recv < ConnectionStep::IDENTITY_VERIFIED) {
                 requestCurrentStep(sender);
             } else {
-                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " receive SEND_SERVER_AES_KEY");
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_SERVER_AES_KEY");
                 bool valid = clusterManager->getIdentityManager().receiveAesKey(*sender, message);
                 if (valid && sender->isAlive()) { 
                     //update this manager status for this peer (track the connection progress)
@@ -325,7 +326,7 @@ namespace supercloud{
                         //wait a bit for the disconnect to be in effect
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                         //reconnect
-                        ptr->connectTo(address, port, 0);
+                        ptr->connectTo(address, port, 2000);
                     });
                     reconnectThread.detach();
                 }

@@ -22,6 +22,7 @@ namespace supercloud {
         }
         virtual EndPoint local_endpoint() const override;
         virtual EndPoint remote_endpoint() const override;
+        virtual std::string get_local_ip_network() const override;
         virtual std::future<void> connect() override;
         virtual void write(ByteBuff& buffer) override;
         virtual size_t read(ByteBuff& buffer) override;
@@ -30,7 +31,6 @@ namespace supercloud {
         virtual void close() override;
 
         tcp::socket& get_asio_socket() { return m_socket; }
-        virtual std::string BoostAsioSocket::get_local_ip_network() const;
     };
 
 

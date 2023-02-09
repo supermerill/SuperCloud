@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <thread>
+#include <map>
 #include <mutex>
 
 #include "ClusterManager.hpp"
