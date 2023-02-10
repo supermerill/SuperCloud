@@ -15,6 +15,7 @@ namespace supercloud{
     }
 
     void ClusterAdminMessageManager::receiveMessage(PeerPtr sender, uint8_t messageId, ByteBuff message) {
+        log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ClusterAdminMessageManager) receive message "+ messageId+" : "+ messageId_to_string(messageId));
         // answer to deletion
         if (!sender->isAlive()) {
             return;
@@ -22,22 +23,15 @@ namespace supercloud{
         if (messageId == *UnnencryptedMessageType::NEW_CONNECTION) {
             log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ClusterAdminMessageManager) receive NEW_CONNECTION");
             sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_DATABASE);
-            //find if this peer isn't already loaded
-            clusterManager.getIdentityManager().fusionWithConnectedPeer(sender);
-            if (sender->initiatedByMe()){
-                // save this successful connection
-                IdentityManager::PeerData old_peer_data = clusterManager.getIdentityManager().getPeerData(sender->getComputerId());
-                IdentityManager::PeerData peer_data = old_peer_data;
-                // get local ip
-                peer_data.private_interface = IdentityManager::PeerConnection{ sender->getIP(), sender->getPort(), true, {sender->getLocalIPNetwork()} };
-                clusterManager.getIdentityManager().setPeerData(old_peer_data, peer_data);
-            }
+            
 
             //propagate this new information to other peers
             std::vector<PeerPtr> peers = clusterManager.getPeersCopy();
             ByteBuff buffer = this->createSendServerDatabaseMessage(this->createSendServerDatabase(std::vector<PeerPtr>{ sender }));
             for (PeerPtr& peer : peers) {
-                if (peer && peer->isAlive() && peer->isConnected() && peer != sender && peer->getComputerId() != sender->getComputerId()) {
+                if (peer && peer->isAlive() && peer->isConnected() 
+                    && peer != sender && peer->getComputerId() != sender->getComputerId() 
+                    && peer != clusterManager.getIdentityManager().getSelfPeer()) {
                     peer->writeMessage(*UnnencryptedMessageType::SEND_SERVER_DATABASE, buffer.rewind());
                 }
             }
@@ -58,7 +52,10 @@ namespace supercloud{
             // add us as the first entry
             allPeers.insert(allPeers.begin(), clusterManager.getIdentityManager().getSelfPeer());
             // remove current sender. he known himself
-            allPeers.erase(std::find(allPeers.begin(), allPeers.end(), sender));
+            auto it = std::find(allPeers.begin(), allPeers.end(), sender);
+            if (it != allPeers.end()) {
+                allPeers.erase(it);
+            }
             //create & send
             sender->writeMessage(*UnnencryptedMessageType::SEND_SERVER_DATABASE,
                 this->createSendServerDatabaseMessage(this->createSendServerDatabase(allPeers)));
@@ -92,14 +89,14 @@ namespace supercloud{
         //diff so we can have the list of peers that we aren't connected yet.
         for (PeerPtr& peer : peers) {
             foreach(peer_it, database_peers) {
-                if (peer_it->get() == peer.get()) {
+                if (peer_it->get() == peer.get() || (peer_it->get()->getState() & Peer::ConnectionState::US)) {
                     peer_it.erase();
                 }
             }
         }
         std::vector<IdentityManager::PeerData> database;
         for (PeerPtr& peer : database_peers) {
-            database.push_back(clusterManager.getIdentityManager().getPeerData(peer->getComputerId()));
+            database.push_back(clusterManager.getIdentityManager().getPeerData(peer));
         }
         std::vector<Try> tries;
         // connect & tag peers we already succeed to connect in the past on the current network
@@ -187,7 +184,7 @@ namespace supercloud{
         //wait for connections & store results
         for (Try & essai : tries) {
             if (essai.result.get()) {
-                IdentityManager::PeerData old_data = clusterManager.getIdentityManager().getPeerData(essai.data.peer->getComputerId());
+                IdentityManager::PeerData old_data = clusterManager.getIdentityManager().getPeerData(essai.data.peer);
                 IdentityManager::PeerData new_data = old_data;
                 //find essai.connection
                 IdentityManager::PeerConnection* connection = nullptr;
@@ -230,14 +227,14 @@ namespace supercloud{
         }
         if (ok) {
             m_already_tried[peer_data.peer].push_back(TryConnectData{ get_current_time_milis(), to_test_and_launch });
-            return clusterManager.connect(to_test_and_launch.address, to_test_and_launch.port, 1000);
+            return clusterManager.connect(peer_data.peer, to_test_and_launch.address, to_test_and_launch.port, 1000);
         }
         return {};
     }
 
     void ClusterAdminMessageManager::useServerDatabaseMessage(PeerPtr& sender, std::vector<DataSendServerDatabaseItem> data) {
 
-        log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " useServerDatabaseMessage: " + data.size());
+        log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ClusterAdminMessageManager) useServerDatabaseMessage: " + data.size());
         // first entry: verify it's my sender peer
         DataSendServerDatabaseItem& first_item = data.front();
         size_t start_at = 0;
@@ -246,8 +243,8 @@ namespace supercloud{
         if (first_item.last_peer_id == sender->getPeerId()) {
             start_at = 1;
             do {
-            sender_data_old = clusterManager.getIdentityManager().getPeerData(sender->getComputerId());
-            sender_data = sender_data_old;
+                sender_data_old = clusterManager.getIdentityManager().getPeerData(sender);
+                sender_data = sender_data_old;
                 if( first_item.computer_id != sender->getComputerId()
                     || first_item.rsa_public_key != sender_data.rsa_public_key) {
                     //problem, abord
@@ -260,15 +257,17 @@ namespace supercloud{
                         sender_data.private_interface->success_from.push_back(clusterManager.getIdentityManager().getSelfPeer()->getIP());
                     }
                 }
-            } while (!clusterManager.getIdentityManager().setPeerData(sender_data, sender_data));
+            } while (!clusterManager.getIdentityManager().setPeerData(sender_data_old, sender_data));
         }
 
         //other entries: 
         for (auto it = data.begin() + start_at; it != data.end(); ++it) {
-            //check data
-            IdentityManager::PeerData old_peer_data = clusterManager.getIdentityManager().getPeerData(it->computer_id);
-            IdentityManager::PeerData peer_data = old_peer_data;
-            if (peer_data.peer) {
+            //find peer
+            PeerPtr peer = clusterManager.getIdentityManager().getLoadedPeer(it->computer_id);
+            //check
+            if (peer) {
+                IdentityManager::PeerData old_peer_data = clusterManager.getIdentityManager().getPeerData(peer);
+                IdentityManager::PeerData peer_data = old_peer_data;
                 //found, update informations about pub & priv interface if not present
                 if (peer_data.rsa_public_key != it->rsa_public_key) {
                     //error, different pub key than expected
@@ -300,6 +299,7 @@ namespace supercloud{
                 }
             } else {
                 //not found, just create the new entry
+                IdentityManager::PeerData peer_data;
                 peer_data.rsa_public_key = it->rsa_public_key;
                 if (it->last_private_interface) {
                     peer_data.private_interface = IdentityManager::PeerConnection{ it->last_private_interface->first, it->last_private_interface->second, false };
@@ -330,17 +330,23 @@ namespace supercloud{
         std::vector<ClusterAdminMessageManager::DataSendServerDatabaseItem> ret_list;
         // //just give our provate interface and our public ones.
         for (const PeerPtr& peer : all_peers) {
-            IdentityManager::PeerData data = clusterManager.getIdentityManager().getPeerData(peer->getComputerId());
-            ClusterAdminMessageManager::DataSendServerDatabaseItem& item = ret_list.emplace_back();
-            item.computer_id = peer->getComputerId();
-            item.last_peer_id = peer->getPeerId();
-            item.current_state = peer->getState();
-            item.rsa_public_key = data.rsa_public_key;
-            if (data.private_interface) {
-                item.last_private_interface = { data.private_interface->address, data.private_interface->port };
-            }
-            for (const IdentityManager::PeerConnection& connection : data.public_interfaces) {
-                item.published_interfaces.emplace_back(connection.address, connection.port);
+            //double-check the entries, there may be temprorary ones from the clusterManager list.
+            // only use the ones that are in our db (or us)
+            if (peer->getComputerId() != 0 && peer->getComputerId() != NO_COMPUTER_ID 
+                && 0 != (peer->getState() & (Peer::ConnectionState::DATABASE | Peer::ConnectionState::US))) {
+                IdentityManager::PeerData data = clusterManager.getIdentityManager().getPeerData(peer);
+                ClusterAdminMessageManager::DataSendServerDatabaseItem& item = ret_list.emplace_back();
+                item.computer_id = peer->getComputerId();
+                item.last_peer_id = peer->getPeerId();
+                item.current_state = peer->getState();
+                item.rsa_public_key = data.rsa_public_key;
+                assert(!item.rsa_public_key.empty());
+                if (data.private_interface) {
+                    item.last_private_interface = { data.private_interface->address, data.private_interface->port };
+                }
+                for (const IdentityManager::PeerConnection& connection : data.public_interfaces) {
+                    item.published_interfaces.emplace_back(connection.address, connection.port);
+                }
             }
         }
         return ret_list;
@@ -362,6 +368,7 @@ namespace supercloud{
             buff.putUShort(peer.computer_id);
             //the rsa key to identify it
             buff.putUTF8(peer.rsa_public_key);
+            assert(!peer.rsa_public_key.empty());
             //the known current state of this computer in the network
             buff.put(peer.current_state);
             //the private interface (if any)
@@ -386,6 +393,7 @@ namespace supercloud{
         std::vector<ClusterAdminMessageManager::DataSendServerDatabaseItem> ret_list;
 
         const size_t nb_peers = buff.getSize();
+        log(std::to_string(clusterManager.getPeerId() % 100) + " (ClusterAdminMessageManager) DATABASE entries: " + nb_peers);
         for (size_t idx_peer = 0; idx_peer < nb_peers; ++idx_peer) {
             DataSendServerDatabaseItem& peer = ret_list.emplace_back();
             // the peer id, not that useful, but can help to match with already connected peers
@@ -408,6 +416,13 @@ namespace supercloud{
                 uint16_t pub_port = buff.getUShort();
                 peer.published_interfaces.emplace_back(pub_addr, pub_port);
             }
+
+            std::string rsa_log_str;
+            for (uint8_t c : peer.rsa_public_key) {
+                rsa_log_str += u8_hex(c);
+            }
+            log(std::to_string(clusterManager.getPeerId() % 100) + " (ClusterAdminMessageManager) read database entry: pid:"+ (peer.last_peer_id%100)
+                +" cid="+ peer.computer_id+" ip="+ priv_addr+" port="+ priv_port+" pubkey="+ rsa_log_str);
         }
         return ret_list;
     }

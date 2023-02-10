@@ -34,14 +34,20 @@ namespace supercloud {
 			NETWORK_FAIL,
 		};
 
-		enum ConnectionState : uint8_t {
+		enum ConnectionState : uint16_t {
 			NO_STATE = 0, // shouldn't happen, it should have at least an attribute
-			LOADED_FROM_DB = 1 << 0, // when created at startup from the db
-			CONNECTING = 1 << 1, // when the connection between me and this peer is started.
-			CONNECTED = 1 << 2, // when the connection between me and this peer is established, and we can exchange any msg.
-			ALIVE_IN_NETWORK = 1 << 3, // when (a peer tell me that) this peer is connected to the network
-			DISCONNECTED = 1 << 4, //  when a peer isn't connected to the nework, but may be still alive disconnected and may reconnect.
-			FROM_ME = 1 << 5, //  If i'm the one who initiate the connection.
+			// creation state
+			US =			1 << 0, // the peer that represent ourself
+			DATABASE =		1 << 1, // when the peer has been createdcreated at startup from the db
+			ENTRY_POINT =	1 << 2, // a database entry with only hip/port, as an entry point to our first connection.
+			TEMPORARY =		1 << 3, // when the peer object has been created from a connection event, but i still don't have its computer id to know more
+			//connection state
+			CONNECTING =	1 << 4, // when the connection between me and this peer is started.
+			CONNECTED =		1 << 5, // when the connection between me and this peer is established, and we can exchange any msg.
+			ALIVE_IN_NETWORK=1 << 6, // when (a peer tell me that) this peer is connected to the network
+			DISCONNECTED =	1 << 7, //  when a peer isn't connected to the nework, but has been and may be still alive disconnected and may reconnect.
+			// connection direction
+			FROM_ME =		1 << 8, //  If i'm the one who initiate the connection.
 		};
 
 	private:
@@ -138,9 +144,7 @@ namespace supercloud {
 		void readMessage();
 
 		//// getters  ///////////////////////////////////////////////////////////////////
-		void setPeerId(uint64_t new_id) {
-			m_peer_id = new_id;
-		}
+		void setPeerId(uint64_t new_id);
 
 		PhysicalServer& getMyServer() {
 			return myServer;
@@ -179,7 +183,10 @@ namespace supercloud {
 		ConnectionState getState() { return m_state; }
 		// Should be changed to a thread-safe compare&swap but not worth the hassle. so:
 		// !! Use the synchronize() before calling getState and then setState, or even setState alone.
-		void setState(ConnectionState new_state) { m_state = new_state; }
+		void setState(ConnectionState new_state) { 
+			assert(new_state != 0);
+			m_state = new_state;
+		}
 		bool isConnected() { return 0 != (m_state & Peer::ConnectionState::CONNECTED); }
 
 		void close();

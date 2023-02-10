@@ -1,7 +1,9 @@
 #pragma once
 
 #include <condition_variable>
+#include <cassert>
 #include <cstdint>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <random>
@@ -20,49 +22,21 @@ namespace std{
 		size_t count_;
 
 	public:
+		std::string id = "";
 		counting_semaphore() : count_(0uL) { }// Initialized as locked.
 		counting_semaphore(size_t available) : count_(available) { }// Initialized as locked.
 		counting_semaphore(const counting_semaphore&) = delete; // can't copy
 		counting_semaphore& operator=(const counting_semaphore&) = delete; // can't copy
 
-		void release() {
-			std::lock_guard<decltype(mutex_)> lock(mutex_);
-			++count_;
-			condition_.notify_one();
-		}
+		void release();
 
-		void release(size_t number) {
-			std::lock_guard<decltype(mutex_)> lock(mutex_);
-			count_ += number;
-			condition_.notify_all();
-		}
+		void release(size_t number);
 
-		void acquire() {
-			std::unique_lock<decltype(mutex_)> lock(mutex_);
-			while (!count_) // Handle spurious wake-ups.
-				condition_.wait(lock);
-			--count_;
-		}
+		void acquire();
 
-		void acquire(size_t number) {
-			std::unique_lock<decltype(mutex_)> lock(mutex_);
-			while (number > 0) {
-				while (!count_) // Handle spurious wake-ups.
-					condition_.wait(lock);
-				size_t removed_count = std::min(number, count_);
-				number -= removed_count;
-				count_ -= removed_count;
-			}
-		}
+		void acquire(size_t number);
 
-		bool try_acquire() {
-			std::lock_guard<decltype(mutex_)> lock(mutex_);
-			if (count_) {
-				--count_;
-				return true;
-			}
-			return false;
-		}
+		bool try_acquire();
 	};
 }
 
@@ -70,7 +44,7 @@ namespace supercloud{
 	//FIXME constexpr
 	inline const uint16_t NO_COMPUTER_ID = uint16_t(-1);
 	inline const uint64_t NO_CLUSTER_ID = uint64_t(-1);
-	inline const uint64_t NO_PEER_ID = uint64_t(-1);
+	inline const uint64_t NO_PEER_ID = uint64_t(-16);
 
 	typedef std::string InetAdress;
 	typedef std::pair<InetAdress, uint16_t> InetSocketAddress;
@@ -80,6 +54,13 @@ namespace supercloud{
 	{
 		std::stringstream stream;
 		stream << std::hex << data;
+		return stream.str();
+	}
+
+	inline std::string u8_hex(uint8_t data)
+	{
+		std::stringstream stream;
+		stream << std::hex << std::setfill('0') << std::setw(2) << uint16_t(data);
 		return stream.str();
 	}
 
@@ -169,11 +150,11 @@ namespace supercloud{
 		/// Little wrapper class over a vector to easier iteration on it when a erase is needed.
 		// it can go both direction with ++/next() and --/previous()
 		// usage stl-like:
-		//   for(better_it it = ++better_it{my_vec}; it.has_next(); ++it){
+		//   for(auto it = ++custom::it{my_vec}; it.valid(); ++it){
 		//     if(it->bad()) it->erase();
 		//   }
 		// usage java-like:
-		//   better_it it(my_vec);
+		//   custom::it it{my_vec};
 		//   while(it.has_next()){
 		//     my_type& obj = it.next();
 		//     if(obj.bad()) it.erase();
@@ -207,7 +188,7 @@ namespace supercloud{
 			bool has_previous() { return (pos - 1) >= 0; }
 			// go to the next position, and return the value. Don't call it if has_next() return false
 			T& next() { assert(has_next()); return (*vec)[++pos]; }
-			T& previous() { assert(has_next()); return (*vec)[--pos]; }
+			T& previous() { assert(has_previous()); return (*vec)[--pos]; }
 			// go to the next position, and return the value with bounds checks.
 			T& go_next() { return vec->at(++pos); }
 			T& go_previous() { return vec->at(--pos); }
@@ -225,7 +206,7 @@ namespace supercloud{
 
 		};
 
-#define foreach(itname,vecname) for(custom::it itname = ++custom::it{vecname}; itname.has_next(); ++itname)
+#define foreach(itname,vecname) for(custom::it itname = ++custom::it{vecname}; itname.valid(); ++itname)
 	}
 
 	void error(std::string str);

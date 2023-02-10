@@ -45,7 +45,6 @@ namespace supercloud {
      */
     class PhysicalServer : public ClusterManager, public std::enable_shared_from_this<PhysicalServer>{
     protected:
-        bool has_peer_id = false;
 
         ServerConnectionState m_state;
 
@@ -119,7 +118,7 @@ namespace supercloud {
 
         uint64_t getPeerId() const override;
         void setPeerId(uint64_t new_peer_id);
-        bool hasPeerId() const { return has_peer_id && getPeerId() != 0 && getPeerId() != NO_PEER_ID; }
+        bool hasPeerId() const { return getPeerId() != 0 && getPeerId() != NO_PEER_ID; }
         uint16_t getComputerId() const override;
 
         const ServerConnectionState& getState() { return m_state; }
@@ -146,7 +145,7 @@ namespace supercloud {
         /// </summary>
         /// <param name="ip">address</param>
         /// <param name="port">port</param>
-        std::future<bool> connect(const std::string& path, uint16_t port, int64_t timeout_milis) override;
+        std::future<bool> connect(PeerPtr peer, const std::string& path, uint16_t port, int64_t timeout_milis) override;
 
         /// <summary>
         /// Try to connect to a peer at this address/port.
@@ -155,7 +154,7 @@ namespace supercloud {
         /// <param name="ip">address</param>
         /// <param name="port">port</param>
         /// <returns>false if the connection can't be establish</returns>
-        virtual bool connectTo(const std::string& ip, uint16_t port, int64_t timeout_milis, std::shared_ptr<std::promise<bool>> notify_socket_connection = {});
+        virtual bool connectTo(PeerPtr peer, const std::string& ip, uint16_t port, int64_t timeout_milis, std::shared_ptr<std::promise<bool>> notify_socket_connection = {});
 
 
         uint16_t getListenPort() {

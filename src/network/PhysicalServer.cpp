@@ -13,7 +13,7 @@
 
 namespace supercloud {
 
-    PhysicalServer::PhysicalServer() : has_peer_id(false) {
+    PhysicalServer::PhysicalServer() {
         this->m_listen_socket = ServerSocket::factory->create();
     }
 
@@ -102,17 +102,17 @@ namespace supercloud {
                 PeerPtr& nextP = itPeers.next();
                 if (this->getComputerId() != NO_COMPUTER_ID && nextP->getComputerId() == this->getComputerId()) {
                     error(std::string("Error: a peer (")+ (nextP->getPeerId()%100)+") is me (" + (getPeerId() % 100) + ") (same computerid) " + this->getComputerId());
-                    getIdentityManager().removeBadPeer(nextP.get(), this->getComputerId());
+                    getIdentityManager().removeBadPeer(nextP);
                     nextP->close();
                     itPeers.erase();
                 } else if (this->hasPeerId() && nextP->getPeerId() == this->getPeerId()) {
                     error(std::string(" Error: a peer (") + (nextP->getPeerId() % 100) +") is me (" + (getPeerId() % 100) + ") (same peerId) ");
-                    getIdentityManager().removeBadPeer(nextP.get(), this->getComputerId());
+                    getIdentityManager().removeBadPeer(nextP);
                     nextP->close();
                     itPeers.erase();
                 } else if (!nextP->isAlive()){
                     error(std::to_string(getPeerId() % 100) + std::string(" Error: a peer (") + (nextP->getPeerId() % 100) +") is dead: clean it" );
-                    getIdentityManager().removeBadPeer(nextP.get(), this->getComputerId());
+                    getIdentityManager().removeBadPeer(nextP);
                     nextP->close();
                     itPeers.erase();
                 }else if ((nextP->getComputerId() == 0 || nextP->getComputerId() == NO_COMPUTER_ID) && nextP->createdAt < now - 2 * 60 * 1000) {
@@ -149,6 +149,9 @@ namespace supercloud {
                 if (now - m_last_minute_update > 1000 * 60) {
                     this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_MINUTE, now_msg);
                 }
+            } else if(peer->isAlive()){
+                //propagate only to connectionmessage
+                this->m_connection_manager->receiveMessage(peer, *UnnencryptedMessageType::TIMER_SECOND, now_msg.rewind());
             }
         }
 
@@ -170,14 +173,14 @@ namespace supercloud {
                 std::thread socketListenerThread([me, port]() {
                     try {
                         me->m_listen_socket->init(port);
-                        log(std::string("Listen to ") + me->m_listen_socket->endpoint().address() + " : " + me->m_listen_socket->endpoint().port() + "\n");
+                        log(std::to_string(me->getPeerId() % 100) + " Listen to " + me->m_listen_socket->endpoint().address() + " : " + me->m_listen_socket->endpoint().port() + "\n");
 
                         while (true) {
-                            log("wait a connect...\n");
+                            log(std::to_string(me->getPeerId() % 100) + " wait a connect...\n");
                             //create this connection socket
                             std::shared_ptr<Socket> new_socket = me->m_listen_socket->listen();
-                            log("connected to a socketserver\n");
-                            PeerPtr peer = Peer::create(*me, new_socket->local_endpoint().address(), new_socket->local_endpoint().port(), Peer::ConnectionState::CONNECTING);
+                            log(std::to_string(me->getPeerId() % 100) + " connected to a socketserver\n");
+                            PeerPtr peer = Peer::create(*me, new_socket->local_endpoint().address(), new_socket->local_endpoint().port(), Peer::ConnectionState::TEMPORARY | Peer::ConnectionState::CONNECTING);
                             std::thread clientSocketThread([me, peer, new_socket]() {
                                 try {
                                     if (me->initConnection(peer, new_socket, false)) {
@@ -324,12 +327,16 @@ namespace supercloud {
     * @param port port
     * @return false if it fails to connect, and true if it has a connection at some point. 
     */
-    bool PhysicalServer::connectTo(const std::string& ip, uint16_t port, int64_t timeout_milis, std::shared_ptr<std::promise<bool>> notify_socket_connection) {
+    bool PhysicalServer::connectTo(PeerPtr peer, const std::string& ip, uint16_t port, int64_t timeout_milis, std::shared_ptr<std::promise<bool>> notify_socket_connection) {
         bool has_emmitted_promise = false;
+        Peer::ConnectionState state = peer->getState();
         // check if it's not me
         if (this->m_listen_socket && this->m_listen_socket->endpoint().port() == port
             && (m_listen_socket->endpoint().address() == (ip) || ip == ("127.0.0.1"))) {
             log("DON't connect TO ME MYSELF\n");
+            goto return_false;
+        } else if (peer->isConnected() || (state & Peer::CONNECTING)) {
+            error(std::to_string(getPeerId() % 100) + " Error, trying to connect to a peer " + (peer->getPeerId() % 100) + " that is already connected/connecting");
             goto return_false;
         } else {
             // std::cout<<mySocket.getLocalPort()<<" =?= "<<port<<"\n";
@@ -360,7 +367,22 @@ namespace supercloud {
             //note: this may be well a duplicate of an existing one but:
             // 1- it's one that has been closed, and it's better to let it disapear and create a new one.
             // 2- it's one loaded from the database, but we don't know for sure its computerid and identity for now, so the "fusion" will be done later.
-            PeerPtr peer = Peer::create(*this, ip, port, Peer::ConnectionState::CONNECTING);
+            //PeerPtr peer = Peer::create(*this, ip, port, Peer::ConnectionState::TEMPORARY | Peer::ConnectionState::CONNECTING);
+            if (!peer) {
+                peer = Peer::create(*this, ip, port, Peer::ConnectionState::TEMPORARY | Peer::ConnectionState::CONNECTING);
+            } else {
+                {
+                    std::lock_guard lock{ peer->synchronize() };
+                    Peer::ConnectionState state = peer->getState();
+                    assert(!(state & Peer::ConnectionState::US));
+                    assert(!(state & Peer::ConnectionState::CONNECTING));
+                    assert(!(state & Peer::ConnectionState::CONNECTED));
+                    // connecting 
+                    state = state | Peer::ConnectionState::CONNECTING;
+                    // (keep disconnected flag for now)
+                    peer->setState(state);
+                }
+            }
             //try {
                 if (initConnection(peer, new_socket, true)) {
                     //FIXME have to listen to the connection from this thread or the socket is closed
@@ -417,7 +439,6 @@ namespace supercloud {
     void PhysicalServer::setPeerId(uint64_t new_peer_id) {
         msg(std::to_string(getPeerId()%100) + " choose my definitive peer id : " + new_peer_id +" ("+(new_peer_id%100)+")");
         getIdentityManager().getSelfPeer()->setPeerId(new_peer_id);
-        has_peer_id = true;
     }
 
     bool PhysicalServer::reconnect() {
@@ -434,8 +455,8 @@ namespace supercloud {
                 const std::string& path = oldp->getIP();
                 uint16_t port = oldp->getPort();
                 std::shared_ptr<PhysicalServer> me = ptr();
-                std::thread updaterThread([me, path, port]() {
-                    me->connectTo(path, port, 2000, {});
+                std::thread updaterThread([me, oldp, path, port]() {
+                    me->connectTo(oldp, path, port, 2000, {});
                     });
                 updaterThread.detach();
             }
@@ -494,7 +515,7 @@ namespace supercloud {
         for (std::shared_ptr<AbstractMessageManager>& listener : lst) {
             if (!sender->isAlive() && messageId != *UnnencryptedMessageType::CONNECTION_CLOSED) { return; } // can be dead & connected, when closing (and emmiting CLOSE event)
             // receiveMessage get message by value -> it gets a "copy", so it's okay to send the same to evryone.
-            listener->receiveMessage(sender, messageId, message);
+            listener->receiveMessage(sender, messageId, message.rewind());
         }
     }
 
@@ -502,12 +523,12 @@ namespace supercloud {
         this->listen(listenPort);
     }
 
-    std::future<bool> PhysicalServer::connect(const std::string& path, uint16_t port, int64_t timeout_milis) {
+    std::future<bool> PhysicalServer::connect(PeerPtr peer, const std::string& path, uint16_t port, int64_t timeout_milis) {
         std::shared_ptr<PhysicalServer> me = ptr();
         std::shared_ptr<std::promise<bool>> notify_connection_is_successful{ new std::promise<bool> {} };
         std::future<bool> future = notify_connection_is_successful->get_future();
-        std::thread updaterThread([me, path, port, timeout_milis, notify_connection_is_successful]() {
-            me->connectTo(path, port, timeout_milis, notify_connection_is_successful);
+        std::thread updaterThread([me, peer, path, port, timeout_milis, notify_connection_is_successful]() {
+            me->connectTo(peer, path, port, timeout_milis, notify_connection_is_successful);
         });
         updaterThread.detach();
         return future;
@@ -551,8 +572,8 @@ namespace supercloud {
 
     void PhysicalServer::connect() {
         //TODO: call a ClusterAdminMessageManager method instead, so we try to connect the best first
-        for (PeerPtr& falsePeer : getIdentityManager().getLoadedPeers()) {
-            std::future<bool> wait = this->connect(falsePeer->getIP(), falsePeer->getPort(), 1000);
+        for (PeerPtr& peer : getIdentityManager().getLoadedPeers()) {
+            std::future<bool> wait = this->connect(peer, peer->getIP(), peer->getPort(), 1000);
         }
     }
 

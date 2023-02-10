@@ -62,6 +62,14 @@ namespace supercloud {
 		/// </summary>
 		SEND_SERVER_AES_KEY,
 		/// <summary>
+		///  Ask to know if the connection can be considered established.
+		/// </summary>
+		GET_CONNECTION_ESTABLISHED,
+		/// <summary>
+		///  Notify that we consider this connection established
+		/// </summary>
+		SEND_CONNECTION_ESTABLISHED,
+		/// <summary>
 		///  We a peer decide to change our computer id because of a collision, it emit this message.
 		/// TODO
 		/// </summary>
@@ -112,6 +120,8 @@ namespace supercloud {
 		mutable std::mutex mutex;
 		std::set<uint16_t> m_connected;
 		bool has_connection = false;
+		bool is_disconnecting = false;
+		std::vector<std::string> logmsg;
 	public:
 		inline bool wasConnected() const { return has_connection; }
 		inline bool isConnected() const { return m_connected.size() > 0; }
@@ -122,33 +132,46 @@ namespace supercloud {
 		inline void beganConnection() {
 			std::lock_guard lock{ mutex };
 			++m_something_connecting;
+			is_disconnecting = false;
+			logmsg.push_back("began connection");
 		}
 		inline void abordConnection() {
 			std::lock_guard lock{ mutex };
-			assert(m_something_connecting > 0);
-			m_something_connecting = std::max(size_t(0), m_something_connecting - 1);
+			if (!is_disconnecting) {
+				assert(m_something_connecting > 0);
+				m_something_connecting = std::max(size_t(0), m_something_connecting - 1);
+				logmsg.push_back("abordConnection");
+			}
 		}
 		inline void finishConnection(uint16_t computer_id) {
 			std::lock_guard lock{ mutex };
 			assert(m_something_connecting > 0);
+			assert(!is_disconnecting);
 			m_something_connecting = std::max(size_t(0), m_something_connecting - 1);
 			m_connected.insert(computer_id);
 			has_connection = true;
+			logmsg.push_back(std::string("finishConnection ") + computer_id);
 		}
 		inline void removeConnection(uint16_t computer_id) {
 			std::lock_guard lock{ mutex };
-			auto it = m_connected.find(computer_id);
-			assert(it != m_connected.end());
-			if (it != m_connected.end()) {
-				m_connected.erase(it);
+			if (!is_disconnecting) {
+				auto it = m_connected.find(computer_id);
+				assert(it != m_connected.end());
+				if (it != m_connected.end()) {
+					m_connected.erase(it);
+				}
+				logmsg.push_back(std::string("removeConnection ") + computer_id);
 			}
 		}
 		inline void disconnect() {
 			std::lock_guard lock{ mutex };
 			assert(m_connected.empty());
 			assert(m_something_connecting == 0);
+			is_disconnecting = true;
+			has_connection = false;
 			m_connected.clear();
 			m_something_connecting = 0;
+			logmsg.push_back(std::string("DISCONNECT"));
 		}
 	};
 
@@ -194,7 +217,7 @@ namespace supercloud {
 		 * @param port port
 		 * @return true if it's maybe connected, false if it's maybe not connected
 		 */
-		virtual std::future<bool> connect(const std::string& string, uint16_t port, int64_t timeout_milis) = 0;
+		virtual std::future<bool> connect(PeerPtr peer, const std::string& string, uint16_t port, int64_t timeout_milis) = 0;
 		
 		/// <summary>
 		/// Try to connect all peers in our database, in an async way

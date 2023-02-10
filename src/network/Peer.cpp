@@ -17,6 +17,15 @@ namespace supercloud {
 		return this->m_socket->get_local_ip_network();
 	}
 
+	void Peer::setPeerId(uint64_t new_id) {
+		if (myServer.getIdentityManager().getSelfPeer().get() == this) {
+			log(std::to_string(myServer.getPeerId() % 100) + " CHANGE MY PID from " + std::to_string(m_peer_id % 100) + " to " + (new_id%100));
+		} else {
+			log(std::to_string(myServer.getPeerId() % 100) + " change PID from " + std::to_string(m_peer_id % 100) + " to " + (new_id % 100));
+		}
+		m_peer_id = new_id;
+	}
+
 	// receive only (read)
 	void Peer::run() {
 		//myCurrentThread = Thread.currentThread();
@@ -30,9 +39,8 @@ namespace supercloud {
 			}
 		}
 		catch (std::exception e1) {
-			std::cerr << "ERROR: " << e1.what() << "\n";
-			std::cerr<< myServer.getPeerId() % 100 << " error in the communication stream between peers" + myServer.getPeerId() % 100 << " and "
-				<< getPeerId() % 100 + " : " << e1.what()<<"\n";
+			error(std::to_string(myServer.getPeerId() % 100) + "ERROR: " + e1.what());
+			error(std::to_string(myServer.getPeerId() % 100) + " error in the communication stream with peer: " + (getPeerId() % 100)+" : " + e1.what());
 		}
 
 		// check if i'm not a duplicate
@@ -165,9 +173,9 @@ namespace supercloud {
 			}
 		}
 		if (message.position() != 0) {
-			msg(std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
+			msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
 		}
-		msg(std::string("WRITE PRIORITY MESSAGE : ") + messageId + " : " + (message.position() >= message.limit() ? "null" : ""+(message.available())));
+		msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("WRITE PRIORITY MESSAGE : ") + messageId + " : " + (message.position() >= message.limit() ? "null" : ""+(message.available())));
 		
 	}
 
@@ -199,7 +207,7 @@ namespace supercloud {
 						encodedMsgLength = size_t(message.available());
 					}
 				} else {
-					std::cout<<"Error, tried to send a " << messageId << " message when we don't have a aes key!\n";
+					error(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + "Error, tried to send a " + messageId +":" + messageId_to_string(messageId) + " message when we don't have a aes key!");
 					return;
 				}
 			} else {
@@ -230,7 +238,7 @@ namespace supercloud {
 				}
 			}
 			if (encodedMsg != nullptr && message.position() != 0) {
-				msg(std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
+				msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
 			}
 			log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) 
 				+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.available())));
@@ -288,13 +296,14 @@ namespace supercloud {
 				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + (" Stream error: not same byte for message id : ") + byte_read + " != " + same_byte);
 				return;
 			}
-			//log(std::to_string(myServer.getPeerId() % 100) + " read message id :" + newByte+" "+ messageId_to_string(newByte));
+			uint8_t message_id = byte_read;
+			log(std::to_string(myServer.getPeerId() % 100) + " read message id :" + uint16_t(message_id) +" "+ messageId_to_string(message_id));
 			if (size_read < 1) {
 				throw read_error("End of stream");
 			}
 			if (!this->alive) { return; }
-			if (byte_read >50) {
-				log(std::string("error, receive a too big message id: ") + byte_read);
+			if (message_id >50) {
+				log(std::string("error, receive a too big message id: ") + message_id);
 				return;
 			}
 			// read message
@@ -342,7 +351,7 @@ namespace supercloud {
 				//if (decoder == nullptr) decoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.DECRYPT_MODE);
 				uint8_t* decodedMsg = nullptr;
 				size_t decodedMsgLength = 0;
-				if (byte_read > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
+				if (message_id > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
 					if (this->isConnected()) {
 						if (buff_message.position() < buff_message.limit() && message_size > 0 && buff_message.available() > 0) {
 							//decodedMsg = decoder.doFinal(buffIn.raw_array(), buffIn.position(), buffIn.limit());
@@ -352,20 +361,20 @@ namespace supercloud {
 							//but for now, leave it untouched.
 						}
 					} else {
-						error(std::string("Error, try to receive a ") + messageId_to_string(byte_read) + " message when we don't have a aes key!");
+						error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "Error, tried to read a " + int32_t(message_id) + ":" + messageId_to_string(message_id) + " message when we don't have a aes key!");
 						return;
 					}
 				}//else : nothing to do, it's not encoded
-				//log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " Read message " + int32_t(byte_read)+" : " + messageId_to_string(byte_read));
+				log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " READ  MESSAGE " + int32_t(message_id)+" : " + messageId_to_string(message_id));
 				//use message
-				if (byte_read == *UnnencryptedMessageType::PRIORITY_CLEAR) {
-					byte_read = buff_message.get();
-					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " read PRIORITY_CLEAR : "+ int32_t(byte_read) + " : " + messageId_to_string(byte_read));
+				if (message_id == *UnnencryptedMessageType::PRIORITY_CLEAR) {
+					message_id = buff_message.get();
+					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " read PRIORITY_CLEAR : "+ int32_t(message_id) + " : " + messageId_to_string(message_id));
 				}
 				if (!this->alive) { return; }
 
 				// standard case, give the peer id. Our physical server should be able to retrieve us.
-				myServer.propagateMessage(this->ptr(), (uint8_t)byte_read, buff_message);
+				myServer.propagateMessage(this->ptr(), (uint8_t)message_id, buff_message);
 
 			}
 			catch (std::exception e) {

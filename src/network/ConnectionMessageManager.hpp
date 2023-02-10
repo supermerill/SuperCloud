@@ -48,6 +48,9 @@ namespace supercloud {
     class ConnectionMessageManager : public AbstractMessageManager, public std::enable_shared_from_this<ConnectionMessageManager>{
     public:
 
+        //can be set to false to verify that it still establish connection if evrything is symetrical, and verbose.
+        static inline bool QUICKER_CONNECTION = true;
+
         enum class ConnectionStep: uint8_t {
             BORN,
             ID,
@@ -55,11 +58,16 @@ namespace supercloud {
             RSA,
             IDENTITY_VERIFIED,
             AES,
+            CONNECTED,
         };
 
         struct ConnectionStatus {
-            ConnectionStep recv = ConnectionStep::BORN;
+            // our connection state
+            ConnectionStep current = ConnectionStep::BORN;
+            //last request emitted
             ConnectionStep last_request = ConnectionStep::BORN;
+            //last time we emitted a request (to know if it's time to do it again)
+            int64_t last_update = 0;
         };
 
         struct Data_SEND_SERVER_ID {
@@ -104,7 +112,7 @@ namespace supercloud {
 
         void register_listener();
 
-        void requestCurrentStep(PeerPtr sender, bool enforce = true);
+        void requestCurrentStep(PeerPtr sender, bool enforce);
 
         void receiveMessage(PeerPtr peer, uint8_t messageId, ByteBuff message) override;
 

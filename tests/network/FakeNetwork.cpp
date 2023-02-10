@@ -91,9 +91,12 @@ namespace supercloud {
             buffer.position(buffer.limit());
             write_count = buffer.position() - write_count;
         }
+        log(this->local_endpoint().address() + ":" + this->local_endpoint().port()+" send "+ write_count+" bytes to "+ m_other_side->local_endpoint().address() + ":" + m_other_side->local_endpoint().port());
         this->m_other_side->m_fifo_available.release(write_count);
     }
     size_t FakeSocket::read(ByteBuff& buffer) {
+        if (m_fifo_available.id == "")
+            m_fifo_available.id = this->local_endpoint().address() + ":" + this->local_endpoint().port();
         if (!open) throw new read_error("Error: can't read: socket closed");
         size_t old_pos = buffer.position();
         m_fifo_available.acquire(buffer.available());

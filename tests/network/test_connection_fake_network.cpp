@@ -233,10 +233,26 @@ namespace supercloud::test {
 			for (int i = 0; i < client_software.size(); i++) {
 				client_software[i]->connect();
 				size_t milis = 0;
-				for (bool success = false; milis < 10000 && !client_software[i]->getState().isConnected(); milis += 1) {
+				for (bool success = false; milis < 10000 && !client_software[i]->getState().isConnected(); milis += 10) {
 					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
-				std::cout << " === connected ====\n";
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				std::cout << " === connected in "<< milis <<" ====\n";
+				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+				std::cout << " === connected => going to next step ====\n";
+			}
+
+			{
+				std::cout << " === wait connection between the two 'clients' ====\n";
+				size_t milis = 0;
+				for (bool success = false
+					; milis < 10000 && 
+					(!client_software[0]->getPeerPtr(client_software[1]->getPeerId()) || !client_software[0]->getPeerPtr(client_software[1]->getPeerId())->isConnected())
+					; milis += 10) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				std::cout << " === FULLY connected in " << milis << " ====\n";
 				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 				std::cout << " === connected => going to next step ====\n";
 			}
@@ -254,7 +270,7 @@ namespace supercloud::test {
 				}
 				for (size_t check = 0; check < client_software.size(); check++) {
 					for (size_t with = check+1; with < client_software.size(); with++) {
-						auto data_with = client_software[check]->getIdentityManager().getPeerData(client_software[with]->getComputerId());
+						auto data_with = client_software[check]->getIdentityManager().getPeerData(client_software[check]->getIdentityManager().getLoadedPeer(client_software[with]->getComputerId()));
 						REQUIRE(bool(data_with.peer));
 						REQUIRE(data_with.rsa_public_key != "");
 						REQUIRE(data_with.private_interface.has_value());

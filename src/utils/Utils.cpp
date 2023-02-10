@@ -1,9 +1,52 @@
 #include "Utils.hpp"
+
 #include "network/ClusterManager.hpp";
 
 #include <chrono>
 #include <mutex>
 #include <sstream>
+
+namespace std {
+
+	void counting_semaphore::release() {
+		std::lock_guard<decltype(mutex_)> lock(mutex_);
+		++count_;
+		condition_.notify_one();
+	}
+
+	void counting_semaphore::release(size_t number) {
+		std::lock_guard<decltype(mutex_)> lock(mutex_);
+		count_ += number;
+		condition_.notify_all();
+	}
+
+	void counting_semaphore::acquire() {
+		std::unique_lock<decltype(mutex_)> lock(mutex_);
+		while (!count_) // Handle spurious wake-ups.
+			condition_.wait(lock);
+		--count_;
+	}
+
+	void counting_semaphore::acquire(size_t number) {
+		std::unique_lock<decltype(mutex_)> lock(mutex_);
+		while (number > 0) {
+			while (!count_) // Handle spurious wake-ups.
+				condition_.wait(lock);
+			size_t removed_count = std::min(number, count_);
+			number -= removed_count;
+			count_ -= removed_count;
+		}
+	}
+
+	bool counting_semaphore::try_acquire() {
+		std::lock_guard<decltype(mutex_)> lock(mutex_);
+		if (count_) {
+			--count_;
+			return true;
+		}
+		return false;
+	}
+}
 
 namespace supercloud{
 
@@ -16,21 +59,28 @@ namespace supercloud{
 
 	std::string id2str[256];
 	void init_id2str(){
-		id2str[*UnnencryptedMessageType::CONNECTION_CLOSED] = "CONNECTION_CLOSED";
+		id2str[*UnnencryptedMessageType::NO_MESSAGE] = "NO_MESSAGE";
 		id2str[*UnnencryptedMessageType::GET_SERVER_ID] = "GET_SERVER_ID";
 		id2str[*UnnencryptedMessageType::SEND_SERVER_ID] = "SEND_SERVER_ID";
-		id2str[*UnnencryptedMessageType::GET_SERVER_AES_KEY] = "GET_SERVER_AES_KEY";
-		id2str[*UnnencryptedMessageType::SEND_SERVER_AES_KEY] = "SEND_SERVER_AES_KEY";
 		id2str[*UnnencryptedMessageType::GET_SERVER_LIST] = "GET_SERVER_LIST";
 		id2str[*UnnencryptedMessageType::SEND_SERVER_LIST] = "SEND_SERVER_LIST";
 		id2str[*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY] = "GET_SERVER_PUBLIC_KEY";
 		id2str[*UnnencryptedMessageType::SEND_SERVER_PUBLIC_KEY] = "SEND_SERVER_PUBLIC_KEY";
 		id2str[*UnnencryptedMessageType::GET_VERIFY_IDENTITY] = "GET_VERIFY_IDENTITY";
 		id2str[*UnnencryptedMessageType::SEND_VERIFY_IDENTITY] = "SEND_VERIFY_IDENTITY";
+		id2str[*UnnencryptedMessageType::GET_SERVER_AES_KEY] = "GET_SERVER_AES_KEY";
+		id2str[*UnnencryptedMessageType::SEND_SERVER_AES_KEY] = "SEND_SERVER_AES_KEY";
+		id2str[*UnnencryptedMessageType::GET_CONNECTION_ESTABLISHED] = "GET_CONNECTION_ESTABLISHED";
+		id2str[*UnnencryptedMessageType::SEND_CONNECTION_ESTABLISHED] = "SEND_CONNECTION_ESTABLISHED";
+		id2str[*UnnencryptedMessageType::REVOKE_COMPUTER_ID] = "REVOKE_COMPUTER_ID";
 		id2str[*UnnencryptedMessageType::PRIORITY_CLEAR] = "PRIORITY_CLEAR";
+		id2str[*UnnencryptedMessageType::NEW_CONNECTION] = "NEW_CONNECTION";
+		id2str[*UnnencryptedMessageType::CONNECTION_CLOSED] = "CONNECTION_CLOSED"; 
 		id2str[*UnnencryptedMessageType::TIMER_SECOND] = "TIMER_SECOND";
 		id2str[*UnnencryptedMessageType::TIMER_MINUTE] = "TIMER_MINUTE";
 		id2str[*UnnencryptedMessageType::FIRST_ENCODED_MESSAGE] = "FIRST_ENCODED_MESSAGE";
+		id2str[*UnnencryptedMessageType::GET_SERVER_DATABASE] = "GET_SERVER_DATABASE";
+		id2str[*UnnencryptedMessageType::SEND_SERVER_DATABASE] = "SEND_SERVER_DATABASE";
 	}
 	std::string messageId_to_string(uint8_t type) {
 		if (id2str[*UnnencryptedMessageType::GET_SERVER_ID].empty()) {
