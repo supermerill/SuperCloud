@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <functional>
 
+#include <boost/version.hpp>
+
 #include "network/PhysicalServer.hpp"
 #include "network/IdentityManager.hpp"
 #include "network/BoostAsioNetwork.hpp"
@@ -57,10 +59,7 @@ namespace supercloud::test {
 	//	NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
 	//	NetPtr net_192_168_2 = NetPtr{ new FakeLocalNetwork{"192.168.2"} };
 
-	//	typedef std::shared_ptr<PhysicalServer> ServPtr;
-
-	//	typedef std::shared_ptr<FakeLocalNetwork> Fnet;
-	//	std::map < std::string, Fnet > fakeNetworks;
+	//	std::map < std::string, NetPtr > fakeNetworks;
 	//	std::string last_listen_ip = "";
 	//	uint16_t last_listen_port = 0;
 
@@ -132,10 +131,7 @@ namespace supercloud::test {
 	//	ServerSocket::factory.reset(new FakeSocketFactory());
 	//	NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
 
-	//	typedef std::shared_ptr<PhysicalServer> ServPtr;
-
-	//	typedef std::shared_ptr<FakeLocalNetwork> Fnet;
-	//	std::map < std::string, Fnet > fakeNetworks;
+	//	std::map < std::string, NetPtr > fakeNetworks;
 	//	std::string last_listen_ip = "";
 	//	uint16_t last_listen_port = 0;
 
@@ -203,41 +199,112 @@ namespace supercloud::test {
 	//		std::filesystem::remove_all(client.getFileOrCreate().parent_path());
 	//	}
 	//}
+//
+//SCENARIO("testing the sinpple connection between two peers and a server in the same network") {
+//	size_t nb = 3;
+//	ServerSocket::factory.reset(new FakeSocketFactory());
+//	NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+//
+//	std::map < std::string, NetPtr > fakeNetworks;
+//	std::string last_listen_ip = "";
+//	uint16_t last_listen_port = 0;
+//
+//	std::vector<Parameters> parameters;
+//	std::vector<ServPtr> computers;
+//	for (int i = 0; i < nb; i++) {
+//		parameters.push_back(createNewConfiguration());
+//		if (i > 0) addEntryPoint(parameters.back(), "192.168.0.1", 4242);
+//		computers.push_back(createPeerFakeNet(parameters.back(), net_192_168_0, "192.168.0." + std::to_string(i + 1), i == 0 ? 4242 : 0));
+//		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+//	}
+//
+//	GIVEN(("connect all others, sequentially")) {
+//		for (int i = 1; i < computers.size(); i++) {
+//			std::cout << " === connect client " << i << " ====\n";
+//			computers[i]->connect();
+//			size_t milis = 0;
+//			for (bool success = false; milis < 10000 && !computers[i]->getState().isConnected(); milis += 10) {
+//				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+//			}
+//			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//			std::cout << " === client " << i << " connected in " << milis << " ====\n";
+//			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+//			std::cout << " === connected => going to next step ====\n";
+//		}
+//
+//		//{
+//		//	std::cout << " === wait connection between the two 'clients' ====\n";
+//		//	size_t milis = 0;
+//		//	for (bool success = false
+//		//		; milis < 10000 && 
+//		//		(!computers[1]->getPeerPtr(computers[2]->getPeerId()) || !computers[1]->getPeerPtr(computers[2]->getPeerId())->isConnected())
+//		//		; milis += 10) {
+//		//		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+//		//	}
+//		//	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//		//	std::cout << " === FULLY connected in " << milis << " ====\n";
+//		//	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+//		//}
+//
+//		THEN("test") {
+//			std::lock_guard lock{ *loglock() };
+//			for (size_t check = 0; check < computers.size(); check++) {
+//				REQUIRE(computers[check]->getState().isConnected());
+//				REQUIRE(computers[check]->getComputerId() != 0);
+//				REQUIRE(computers[check]->getPeerId() != 0);
+//				REQUIRE(computers[check]->getComputerId() != NO_COMPUTER_ID);
+//				REQUIRE(computers[check]->getPeerId() != NO_PEER_ID);
+//				REQUIRE(computers[check]->getPeersCopy().size() == (check == 0 ? 2 : 1));
+//				REQUIRE(computers[check]->getIdentityManager().getLoadedPeers().size() == computers.size() - 1);
+//			}
+//			for (size_t check = 0; check < computers.size(); check++) {
+//				for (size_t with = check + 1; with < computers.size(); with++) {
+//					auto data_with = computers[check]->getIdentityManager().getPeerData(computers[check]->getIdentityManager().getLoadedPeer(computers[with]->getComputerId()));
+//					REQUIRE(bool(data_with.peer));
+//					REQUIRE(data_with.rsa_public_key != "");
+//					//REQUIRE(data_with.private_interface.has_value());
+//				}
+//			}
+//		}
+//	}
+//
+//	for (ServPtr& client : computers) {
+//		client->close();
+//	}
+//
+//	for (Parameters& client : parameters) {
+//		std::filesystem::remove_all(client.getFileOrCreate().parent_path());
+//	}
+//}
 
-	SCENARIO("testing the full connection between three peers in the same network, with only one entry point") {
-		size_t nb = 2;
+	SCENARIO("testing the connection between three servers in the same network, with only one entry point") {
+		size_t nb = 3;
 		ServerSocket::factory.reset(new FakeSocketFactory());
 		NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
 
-		typedef std::shared_ptr<PhysicalServer> ServPtr;
-
-		typedef std::shared_ptr<FakeLocalNetwork> Fnet;
-		std::map < std::string, Fnet > fakeNetworks;
+		std::map < std::string, NetPtr > fakeNetworks;
 		std::string last_listen_ip = "";
 		uint16_t last_listen_port = 0;
 
-		Parameters param_serv = createNewConfiguration();
-		ServPtr& serv = createPeerFakeNet(param_serv, net_192_168_0, "192.168.0.1", 4242);
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-		std::vector<Parameters> client_parameter;
-		std::vector<ServPtr> client_software;
+		std::vector<Parameters> parameters;
+		std::vector<ServPtr> computers;
 		for (int i = 0; i < nb; i++) {
-			client_parameter.push_back(createNewConfiguration());
-			addEntryPoint(client_parameter.back(), "192.168.0.1", 4242);
-			client_software.push_back(createPeerFakeNet(client_parameter.back(), net_192_168_0, "192.168.0."+std::to_string(i+2)));
+			parameters.push_back(createNewConfiguration());
+			if (i > 0)addEntryPoint(parameters.back(), "192.168.0.1", 4242);
+			computers.push_back(createPeerFakeNet(parameters.back(), net_192_168_0, "192.168.0." + std::to_string(i + 1), 4242));
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 
 		GIVEN(("connect all others, sequentially")) {
-			for (int i = 0; i < client_software.size(); i++) {
-				client_software[i]->connect();
+			for (int i = 1; i < computers.size(); i++) {
+				std::cout << " === connect client " << i << " ====\n";
+				computers[i]->connect();
 				size_t milis = 0;
-				for (bool success = false; milis < 10000 && !client_software[i]->getState().isConnected(); milis += 10) {
+				for (bool success = false; milis < 10000 && !computers[i]->getState().isConnected(); milis += 10) {
 					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				std::cout << " === connected in "<< milis <<" ====\n";
+				std::cout << " === client " << i << " connected in " << milis << " ====\n";
 				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 				std::cout << " === connected => going to next step ====\n";
 			}
@@ -246,47 +313,59 @@ namespace supercloud::test {
 				std::cout << " === wait connection between the two 'clients' ====\n";
 				size_t milis = 0;
 				for (bool success = false
-					; milis < 10000 && 
-					(!client_software[0]->getPeerPtr(client_software[1]->getPeerId()) || !client_software[0]->getPeerPtr(client_software[1]->getPeerId())->isConnected())
+					; milis < 10000 &&
+					(!computers[1]->getPeerPtr(computers[2]->getPeerId()) || !computers[1]->getPeerPtr(computers[2]->getPeerId())->isConnected())
 					; milis += 10) {
 					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 				std::cout << " === FULLY connected in " << milis << " ====\n";
 				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-				std::cout << " === connected => going to next step ====\n";
 			}
 
-			THEN("connect fully everything with evryone in less than two seconds") {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+			THEN("test") {
 
-				for (size_t check = 0; check < 4; check++) {
-					REQUIRE(client_software[check]->getState().isConnected());
-					REQUIRE(client_software[check]->getComputerId() != 0);
-					REQUIRE(client_software[check]->getPeerId() != 0);
-					REQUIRE(client_software[check]->getComputerId() != NO_COMPUTER_ID);
-					REQUIRE(client_software[check]->getPeerId() != NO_PEER_ID);
-					REQUIRE(client_software[check]->getPeersCopy().size() == client_software.size());
-					REQUIRE(client_software[check]->getIdentityManager().getLoadedPeers().size() == client_software.size());
+				for (size_t check = 0; check < computers.size(); check++) {
+					PeerList peers = computers[check]->getPeersCopy();
+					foreach(peer_it, peers) { if (!(*peer_it)->isConnected()) peer_it.erase(); }
+					std::vector<PeerPtr> loaded = computers[check]->getIdentityManager().getLoadedPeers();
+					computers[check]->log_peers();
+					{
+						std::lock_guard lock{ *loglock() };
+						REQUIRE(computers[check]->getState().isConnected());
+						REQUIRE(computers[check]->getComputerId() != 0);
+						REQUIRE(computers[check]->getPeerId() != 0);
+						REQUIRE(computers[check]->getComputerId() != NO_COMPUTER_ID);
+						REQUIRE(computers[check]->getPeerId() != NO_PEER_ID);
+						REQUIRE(peers.size() == 2);
+						REQUIRE(loaded.size() == computers.size() - 1);
+					}
 				}
-				for (size_t check = 0; check < client_software.size(); check++) {
-					for (size_t with = check+1; with < client_software.size(); with++) {
-						auto data_with = client_software[check]->getIdentityManager().getPeerData(client_software[check]->getIdentityManager().getLoadedPeer(client_software[with]->getComputerId()));
+				for (size_t check = 0; check < computers.size(); check++) {
+					for (size_t with = check + 1; with < computers.size(); with++) {
+						auto data_with = computers[check]->getIdentityManager().getPeerData(computers[check]->getIdentityManager().getLoadedPeer(computers[with]->getComputerId()));
+						std::lock_guard lock{ *loglock() };
 						REQUIRE(bool(data_with.peer));
-						REQUIRE(data_with.rsa_public_key != "");
+						REQUIRE(!data_with.rsa_public_key.empty());
 						REQUIRE(data_with.private_interface.has_value());
 					}
 				}
 			}
 		}
 
-		serv->close();
-		for (ServPtr& client : client_software) {
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		for (ServPtr& client : computers) {
 			client->close();
 		}
 
-		std::filesystem::remove_all(param_serv.getFileOrCreate().parent_path());
-		for (Parameters& client : client_parameter) {
+		for (Parameters& client : parameters) {
 			std::filesystem::remove_all(client.getFileOrCreate().parent_path());
 		}
+		//FIXME: a mean to wait for all threads to close.
+		{std::lock_guard lock{ *loglock() };
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		}
+		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 }

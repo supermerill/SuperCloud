@@ -11,6 +11,7 @@ namespace supercloud {
 
     class Peer;
     class IdentityManager;
+    class PhysicalServer;
 
     //struct Connection_data{};
 
@@ -71,24 +72,21 @@ namespace supercloud {
         };
 
         struct Data_SEND_SERVER_ID {
-            uint64_t peer_id;
+            PeerId peer_id;
             uint64_t cluster_id;
             uint16_t port;
         };
 
         struct Data_SEND_SERVER_LIST {
-            std::unordered_set<uint16_t> registered_computer_id;
-            std::unordered_set<uint16_t> connected_computer_id;
-            std::unordered_set<uint64_t> registered_peer_id;
-            std::unordered_set<uint64_t> connected_peer_id;
+            std::unordered_set<ComputerId> registered_computer_id;
+            std::unordered_set<ComputerId> connected_computer_id;
+            std::unordered_set<PeerId> registered_peer_id;
+            std::unordered_map<PeerId, ComputerId> connected_peer_id;
+            std::unordered_map<ComputerId, PublicKey> our_keys;
         };
     protected:
         std::shared_ptr<PhysicalServer> clusterManager;
-
-        void chooseComputerId(const std::unordered_set<uint16_t>& registered_computer_id, const std::unordered_set<uint16_t>& connected_computer_id);
-        void choosePeerId(const std::unordered_set<uint64_t>& registered_peer_id, const std::unordered_set<uint64_t>& connected_peer_id);
-        
-        mutable std::mutex status_mutex;
+        mutable std::mutex m_status_mutex;
         std::map<PeerPtr, ConnectionStatus> status;
         ServerConnectionState& m_connection_state;
 
@@ -96,6 +94,9 @@ namespace supercloud {
 
         void reconnectWithNewComputerId();
         void setStatus(const PeerPtr& peer, const ConnectionStep new_status);
+        void chooseComputerId(const std::unordered_set<ComputerId>& registered_computer_id,
+            const std::unordered_set<ComputerId>& connected_computer_id, const std::unordered_map<ComputerId, PublicKey>& known_keys);
+        void choosePeerId(const std::unordered_set<PeerId>& registered_peer_id, const std::unordered_map<PeerId, ComputerId>& connected_peer_id);
 
     public:
 
@@ -121,7 +122,7 @@ namespace supercloud {
         ByteBuff create_SEND_SERVER_ID_msg(Data_SEND_SERVER_ID& data);
         Data_SEND_SERVER_ID get_SEND_SERVER_ID_msg(ByteBuff& msg);
 
-        Data_SEND_SERVER_LIST create_Data_SEND_SERVER_LIST();
+        Data_SEND_SERVER_LIST create_Data_SEND_SERVER_LIST(PeerPtr other);
         ByteBuff create_SEND_SERVER_LIST_msg(Data_SEND_SERVER_LIST& data);
         Data_SEND_SERVER_LIST get_SEND_SERVER_LIST_msg(ByteBuff& msg);
 

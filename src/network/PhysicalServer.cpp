@@ -25,7 +25,7 @@ namespace supercloud {
         ptr->m_cluster_admin_manager = ClusterAdminMessageManager::create(*ptr);
 
         //init a random peer id if i won't reuse the previous one.
-        uint64_t my_peer_id = ptr->m_cluster_id_mananger->getSelfPeer()->getPeerId();
+        PeerId my_peer_id = ptr->m_cluster_id_mananger->getSelfPeer()->getPeerId();
         if (my_peer_id == 0 || my_peer_id == NO_PEER_ID) {
             ptr->m_cluster_id_mananger->getSelfPeer()->setPeerId(1 + rand_u63());
         }
@@ -34,10 +34,10 @@ namespace supercloud {
     }
 
 
-    uint64_t PhysicalServer::getPeerId() const {
+    PeerId PhysicalServer::getPeerId() const {
         return m_cluster_id_mananger->getSelfPeer()->getPeerId();
     }
-    uint16_t PhysicalServer::getComputerId() const {
+    ComputerId PhysicalServer::getComputerId() const {
         return m_cluster_id_mananger->getComputerId();
     }
 
@@ -75,9 +75,9 @@ namespace supercloud {
             if (update_check_NO_COMPUTER_ID == 0 && m_last_minute_update != 0) {
                 update_check_NO_COMPUTER_ID = m_last_minute_update;
             }
-            {std::lock_guard lock(this->peers_mutex);
+            {std::lock_guard lock(this->m_peers_mutex);
                 int nbAlive = 0;
-                if ( (peers.empty() || !peers.front()->isAlive()) && update_check_NO_COMPUTER_ID != m_last_minute_update){
+                if ( (m_peers.empty() || !m_peers.front()->isAlive()) && update_check_NO_COMPUTER_ID != m_last_minute_update){
                     error("Error, There is no connection still alive and i still don't have a computer id. Please connect to a valid peer or create a new cluster before calling update.");
                 }
             }
@@ -89,16 +89,10 @@ namespace supercloud {
         ByteBuff now_msg = ByteBuff{}.putLong(now).flip();
        
         //clean peer list
-        {std::lock_guard lock(this->peers_mutex);
-            {std::lock_guard logl{ *loglock() };
-                log(std::to_string(getPeerId() % 100) + " ======== peers =======");
-                for (PeerPtr& p : this->peers) {
-                    log(std::to_string(getPeerId() % 100) + " pid=" + (p->getPeerId() % 100) +" ip=" + p->getIP() + ":" + p->getPort() + " cid=" + p->getComputerId() + " alive:"+ p->isAlive());
-                }
-                log(std::to_string(getPeerId() % 100) + " ======================");
-            }
+        log_peers();
+        {std::lock_guard lock(this->m_peers_mutex);
             //remove bad peers
-            for (auto itPeers = custom::it{ peers }; itPeers.has_next();) {
+            for (auto itPeers = custom::it{ m_peers }; itPeers.has_next();) {
                 PeerPtr& nextP = itPeers.next();
                 if (this->getComputerId() != NO_COMPUTER_ID && nextP->getComputerId() == this->getComputerId()) {
                     error(std::string("Error: a peer (")+ (nextP->getPeerId()%100)+") is me (" + (getPeerId() % 100) + ") (same computerid) " + this->getComputerId());
@@ -123,12 +117,12 @@ namespace supercloud {
             }
 
             // remove duplicate peers
-            std::unordered_map<int16_t, uint16_t> count;
-            for (const PeerPtr& p : peers) {
+            std::unordered_map<ComputerId, size_t> count;
+            for (const PeerPtr& p : m_peers) {
                 count[p->getComputerId()]++;
             }
 
-            foreach(itPeer, peers) {
+            foreach(itPeer, m_peers) {
                  if (count[(*itPeer)->getComputerId()] > 1) {
                     std::cerr<<"Error: multiple peer for " << this->getPeerId() << " : deleting one of multiple instances \n";
                     count[(*itPeer)->getComputerId()]--;
@@ -160,6 +154,22 @@ namespace supercloud {
         }
     }
 
+    void PhysicalServer::log_peers(){
+        PeerList peers;
+        { std::lock_guard lock{ this->m_peers_mutex };
+            peers = getPeersCopy();
+        }
+        PeerPtr me = getPeer();
+        { std::lock_guard logl{ *loglock() };
+            log(std::to_string(getPeerId() % 100) + " ======== peers =======");
+            log(std::to_string(getPeerId() % 100) + " -ME- ip=" + me->getIP() + ":" +getListenPort() + " cid=" + me->getComputerId() + " alive:" + me->isAlive() + " state: " + Peer::connectionStateToString(me->getState()));
+            for (PeerPtr& p : peers) {
+                log(std::to_string(getPeerId() % 100) + " pid=" + (p->getPeerId() % 100) + " ip=" + p->getIP() + ":" + p->getPort() + " cid=" + p->getComputerId() + " alive:" + p->isAlive() + " state: " + Peer::connectionStateToString(p->getState()));
+            }
+            log(std::to_string(getPeerId() % 100) + " ======================");
+        }
+    }
+
     /**
     * Create a new thread to listen to connection.
     * It will create a new one for each new connection.
@@ -172,6 +182,7 @@ namespace supercloud {
                 std::shared_ptr<PhysicalServer> me = ptr();
                 std::thread socketListenerThread([me, port]() {
                     try {
+                        me->getIdentityManager().getSelfPeer()->setPort(port);
                         me->m_listen_socket->init(port);
                         log(std::to_string(me->getPeerId() % 100) + " Listen to " + me->m_listen_socket->endpoint().address() + " : " + me->m_listen_socket->endpoint().port() + "\n");
 
@@ -183,10 +194,15 @@ namespace supercloud {
                             PeerPtr peer = Peer::create(*me, new_socket->local_endpoint().address(), new_socket->local_endpoint().port(), Peer::ConnectionState::TEMPORARY | Peer::ConnectionState::CONNECTING);
                             std::thread clientSocketThread([me, peer, new_socket]() {
                                 try {
+                                    //new socket -> update private interface
+                                    me->checkSelfPrivateInterface(*new_socket);
+                                    //init the connection
                                     if (me->initConnection(peer, new_socket, false)) {
-                                        //FIXME have to listen to the connection from this thread or the socket is closed
+                                        //run the reading thread.
+                                        //have to listen to the connection from this thread or the socket is closed
                                         peer->run();
                                     }
+                                    //exception in reading, close.
                                     peer->close();
                                 }
                                 catch (std::exception e) {
@@ -227,10 +243,10 @@ namespace supercloud {
         if (peer->connect(sock, initiated_by_me)) {
 
             //try {
-                {std::lock_guard lock(this->peers_mutex);
+                {std::lock_guard lock(this->m_peers_mutex);
                     // check if we already have this peer id.
                     PeerPtr otherPeer;
-                    for (const PeerPtr& p : peers) {
+                    for (const PeerPtr& p : m_peers) {
                         if (p->getPeerId() == peer->getPeerId()) {
                             otherPeer = p;
                             break;
@@ -238,10 +254,10 @@ namespace supercloud {
                     }
                     if (!otherPeer) {
                         log(std::to_string(getPeerId() % 100 ) + " 'new' accept connection to " + peer->getPeerId() % 100 + "\n");
-                        // peers.put(peer->getKey(), peer);
-                        if (!peers.contains(peer)) {
+                        // m_peers.put(peer->getKey(), peer);
+                        if (!contains(m_peers, peer)) {
                             //log(std::to_string(getPeerId() % 100 ) + " PROPAGATE " + peer->getPeerId() % 100 + "!\n");
-                            peers.push_back(peer);
+                            m_peers.push_back(peer);
 
                             // new peer: propagate! send this new information to my connected peers => now done in ClusterAdminManager
                             //for (PeerPtr& oldPeer : peers) {
@@ -252,53 +268,53 @@ namespace supercloud {
                             //    }
                             //}
                         } else {
-                            peers.push_back(peer);
+                            m_peers.push_back(peer);
                         }
                         return true;
                     } else {
                         if (otherPeer->isAlive() && !peer->isAlive()) {
-                            std::cerr << getPeerId() % 100 << " 'warn' , close a new dead connection to "
-                                    << peer->getPeerId() % 100 << " is already here....."<<"\n";
+                            error(std::to_string( getPeerId() % 100) + " 'warn' , close a new dead connection to "
+                                    + std::to_string(peer->getPeerId() % 100) + " is already here.....");
                             peer->close();
                         } else if (!otherPeer->isAlive() && peer->isAlive()) {
-                            std::cerr << getPeerId() % 100 << " warn,  close an old dead  a connection to "
-                                    << peer->getPeerId() % 100 << " is already here....."<<"\n";
+                            error(std::to_string( getPeerId() % 100) + " warn,  close an old dead  a connection to "
+                                    + std::to_string(peer->getPeerId() % 100) + " is already here.....");
                             otherPeer->close();
-                            // peers.put(peer->getKey(), peer);
-                            peers.push_back(peer);
+                            // m_peers.put(peer->getKey(), peer);
+                            m_peers.push_back(peer);
                             return true;
                         } else if (otherPeer->getPeerId() != 0) {
                             if (otherPeer->getPeerId() < getPeerId()) {
-                                std::cerr << getPeerId() % 100 << " warn, (I AM LEADER) a connection to "
-                                        << peer->getPeerId() % 100 << " is already here....."<<"\n";
+                                error(std::to_string( getPeerId() % 100) + " warn, (I AM LEADER) a connection to "
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....");
                                 peer->close();
                             } else {
-                                std::cerr << getPeerId() % 100 << " warn, (I am not leader) a connection to "
-                                        << peer->getPeerId() % 100 << " is already here.....\n";
-                                peers.push_back(peer);
+                                error(std::to_string( getPeerId() % 100) + " warn, (I am not leader) a connection to "
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
+                                m_peers.push_back(peer);
                                 return true;
                             }
                         } else if (peer->getPeerId() != 0) {
                             if (peer->getPeerId() < getPeerId()) {
-                                std::cerr << getPeerId() % 100 << " warn, (I AM LEADER) a connection to "
-                                        << peer->getPeerId() % 100 << " is already here.....\n";
+                                error(std::to_string( getPeerId() % 100) + " warn, (I AM LEADER) a connection to "
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
                                 otherPeer->close();
-                                // peers.put(peer->getKey(), peer);
-                                peers.push_back(peer);
+                                // m_peers.put(peer->getKey(), peer);
+                                m_peers.push_back(peer);
                                 return true;
                             } else {
-                                std::cerr << getPeerId() % 100 << " warn, (I am not leader) a connection to "
-                                        << peer->getPeerId() % 100 << " is already here.....\n";
-                                peers.push_back(peer);
+                                error(std::to_string( getPeerId() % 100) + " warn, (I am not leader) a connection to "
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
+                                m_peers.push_back(peer);
                                 return true;
                             }
                         } else {
-                            std::cerr << getPeerId() % 100 << " warn, an unknown connection to "
-                                    << peer->getPeerId() % 100 << " is already here.....\n";
+                            error(std::to_string( getPeerId() % 100) + " warn, an unknown connection to "
+                                    + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
                             peer->close();
                         }
-                        std::cout << getPeerId() % 100 << " 'old' accept connection to "
-                                << peer->getPeerId() % 100<<"\n";
+                        log(std::to_string(getPeerId() % 100) + " 'old' accept connection to "
+                                + std::to_string(peer->getPeerId() % 100));
                     }
                 }
 
@@ -359,6 +375,9 @@ namespace supercloud {
                 new_socket->cancel();
                 goto return_false;
             }
+            //new socket -> update private interface
+            this->checkSelfPrivateInterface(*new_socket);
+            // socket established -> notify the caller
             if (notify_socket_connection) {
                 has_emmitted_promise = true;
                 notify_socket_connection->set_value(true);
@@ -417,15 +436,15 @@ namespace supercloud {
     }
 
     PeerList PhysicalServer::getPeersCopy() const {
-        const std::lock_guard lock(this->peers_mutex);
+        const std::lock_guard lock(this->m_peers_mutex);
         // return copy (made inside the lock)
-        PeerList copy = peers;
+        PeerList copy = m_peers;
         return copy;
     }
 
     void PhysicalServer::removeExactPeer(Peer* peer) {
-        { std::lock_guard lock(peers_mutex);
-            foreach(peerIt, peers) {
+        { std::lock_guard lock(m_peers_mutex);
+            foreach(peerIt, m_peers) {
                 if (peerIt->get() == peer) {
                     peerIt.erase();
                 }
@@ -436,7 +455,7 @@ namespace supercloud {
         removeExactPeer(peer.get());
     }
 
-    void PhysicalServer::setPeerId(uint64_t new_peer_id) {
+    void PhysicalServer::setPeerId(PeerId new_peer_id) {
         msg(std::to_string(getPeerId()%100) + " choose my definitive peer id : " + new_peer_id +" ("+(new_peer_id%100)+")");
         getIdentityManager().getSelfPeer()->setPeerId(new_peer_id);
     }
@@ -444,9 +463,9 @@ namespace supercloud {
     bool PhysicalServer::reconnect() {
         // reconnect all connections
         PeerList oldConnection;
-        { std::lock_guard lock(peers_mutex);
-            oldConnection = peers;
-            peers.clear();
+        { std::lock_guard lock(m_peers_mutex);
+            oldConnection = m_peers;
+            m_peers.clear();
         }
         for (PeerPtr& oldp : oldConnection) {
             if (oldp->isAlive()) {
@@ -482,9 +501,9 @@ namespace supercloud {
     //    return nbEmit;
     //}
 
-    PeerPtr PhysicalServer::getPeerPtr(uint64_t senderId) const {
-        {std::lock_guard lock(this->peers_mutex);
-            for (const PeerPtr& peer : peers) {
+    PeerPtr PhysicalServer::getPeerPtr(PeerId senderId) const {
+        {std::lock_guard lock(this->m_peers_mutex);
+            for (const PeerPtr& peer : m_peers) {
                 if (peer->getPeerId() == senderId) {
                     return peer;
                 }
@@ -538,6 +557,20 @@ namespace supercloud {
         return *m_cluster_id_mananger;
     }
 
+    void PhysicalServer::checkSelfPrivateInterface(const Socket& socket) {
+        //if we are listening to something
+        if (this->getIdentityManager().getSelfPeer()->getPort() > 0)
+        {
+            IdentityManager::PeerData self_data = this->getIdentityManager().getSelfPeerData();
+            //if our private inerface hasn't been set.
+            if (!self_data.private_interface.has_value()) {
+                IdentityManager::PeerData self_data_updated = self_data;
+                //use the local ip and our listening port
+                self_data_updated.private_interface = { socket.local_endpoint().address(), this->getIdentityManager().getSelfPeer()->getPort() };
+                this->getIdentityManager().setPeerData(self_data, self_data_updated);
+            }
+        }
+    }
 
     void PhysicalServer::initializeNewCluster() {
 
@@ -549,7 +582,7 @@ namespace supercloud {
         getIdentityManager().requestSave();
     }
 
-    uint16_t PhysicalServer::getComputerId(uint64_t senderId) const {
+    ComputerId PhysicalServer::getComputerId(PeerId senderId) const {
         if (senderId == this->getPeerId()) return getComputerId();
         PeerPtr p = getPeerPtr(senderId);
         if (p && p->isConnected()) {
@@ -557,11 +590,24 @@ namespace supercloud {
         }
         return NO_COMPUTER_ID;
     }
+    PeerPtr PhysicalServer::getPeer() {
+        return getIdentityManager().getSelfPeer();
+    }
+    std::string PhysicalServer::getLocalIPNetwork() const {
+        std::lock_guard lock(this->m_peers_mutex);
+        //try to get a connection
+        for (const PeerPtr& peer : m_peers) {
+            if (std::string net = peer->getLocalIPNetwork(); net != "") {
+                return net;
+            }
+        }
+        return "";
+    }
 
-    uint64_t PhysicalServer::getPeerIdFromCompId(uint16_t compId) const {
+    PeerId PhysicalServer::getPeerIdFromCompId(ComputerId compId) const {
         if (this->getComputerId() == compId) return this->getPeerId();
-        { std::lock_guard lock(this->peers_mutex);
-            for (const PeerPtr& p : peers) {
+        { std::lock_guard lock(this->m_peers_mutex);
+            for (const PeerPtr& p : m_peers) {
                 if (p->isAlive() && p->getComputerId() == compId) {
                     return p->getPeerId();
                 }
@@ -579,8 +625,8 @@ namespace supercloud {
 
     size_t PhysicalServer::getNbPeers() const {
         size_t nb = 0;
-        { std::lock_guard lock(this->peers_mutex);
-            for (const PeerPtr& p : peers) {
+        { std::lock_guard lock(this->m_peers_mutex);
+            for (const PeerPtr& p : m_peers) {
                 if (p->isAlive() && p->isConnected()) nb++;
             }
         }
@@ -589,8 +635,8 @@ namespace supercloud {
 
     void PhysicalServer::close() {
         log(std::string("Closing server ") + (this->getPeerId() % 100));
-        { std::lock_guard lock(this->peers_mutex);
-            for (PeerPtr& peer : peers) {
+        { std::lock_guard lock(this->m_peers_mutex);
+            for (PeerPtr& peer : m_peers) {
                 if(peer)
                     peer->close();
             }

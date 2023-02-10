@@ -8,11 +8,11 @@ namespace supercloud {
     void FakeLocalNetwork::addRouter(std::shared_ptr<FakeRouter> router) {
         routers.push_back(router);
     }
-    void FakeLocalNetwork::addSocket(FakeSocket* computer) {
+    void FakeLocalNetwork::addSocket(std::weak_ptr<FakeSocket> computer) {
         computers.push_back(computer);
     }
-    std::optional<FakeSocket*> FakeLocalNetwork::getSocket(const EndPoint& endpoint) {
-        std::optional<FakeSocket*>& result = getLocalSocket(endpoint);
+    std::optional<std::weak_ptr<FakeSocket>> FakeLocalNetwork::getSocket(const EndPoint& endpoint) {
+        std::optional<std::weak_ptr<FakeSocket>>& result = getLocalSocket(endpoint);
         if (result) return *result;
         //search via routers
         for (std::shared_ptr<FakeRouter>& fakerouter : routers) {
@@ -21,12 +21,13 @@ namespace supercloud {
         }
         return {};
     }
-    std::optional<FakeSocket*> FakeLocalNetwork::getLocalSocket(const EndPoint& endpoint) {
-        auto it = std::find_if(computers.begin(), computers.end(), [&endpoint](const FakeSocket* sock) {
-            return sock->local_endpoint().address() == endpoint.address() && sock->local_endpoint().port() == endpoint.port();
+    std::optional<std::weak_ptr<FakeSocket>> FakeLocalNetwork::getLocalSocket(const EndPoint& endpoint) {
+        auto it_weak_ptr_socket = std::find_if(computers.begin(), computers.end(), [&endpoint](const std::weak_ptr<FakeSocket>& sock_wptr) {
+            auto sock = sock_wptr.lock();
+            return sock && sock->local_endpoint().address() == endpoint.address() && sock->local_endpoint().port() == endpoint.port();
             });
-        if (it != computers.end()) {
-            return *it;
+        if (it_weak_ptr_socket != computers.end()) {
+            return std::optional<std::weak_ptr<FakeSocket>>{*it_weak_ptr_socket};
         }
         return {};
     }
@@ -41,9 +42,9 @@ namespace supercloud {
         iptables[network] = by ;
         return *this;
     }
-    std::optional<FakeSocket*> FakeRouter::getSocket(const EndPoint& endpoint) {
+    std::optional<std::weak_ptr<FakeSocket>> FakeRouter::getSocket(const EndPoint& endpoint) {
         for (std::shared_ptr<FakeLocalNetwork>& net : networks) {
-            if (std::optional<FakeSocket*> sock = net->getLocalSocket(endpoint); sock.has_value()) {
+            if (std::optional<std::weak_ptr<FakeSocket>> sock = net->getLocalSocket(endpoint); sock.has_value()) {
                 return sock.value();
             }
         }
@@ -83,26 +84,32 @@ namespace supercloud {
         return future;
     }
     void FakeSocket::write(ByteBuff& buffer) {
+        if (!m_open || !m_fifo_mutex) throw write_error("Error: can't write: socket closed");
         size_t write_count = buffer.position();
         {
-            std::lock_guard lock(this->m_other_side->m_fifo_mutex);
-            if (!open) throw new write_error("Error: can't write: socket closed");
+            std::lock_guard lock{ *m_fifo_mutex };
+            if (!m_open) throw write_error("Error: can't write: socket closed");
             this->m_other_side->m_fifo.insert(this->m_other_side->m_fifo.end(), buffer.raw_array() + buffer.position(), buffer.raw_array() + buffer.limit());
             buffer.position(buffer.limit());
             write_count = buffer.position() - write_count;
+            log(this->local_endpoint().address() + ":" + this->local_endpoint().port() + " send " + write_count + " bytes to " + m_other_side->local_endpoint().address() + ":" + m_other_side->local_endpoint().port());
+            this->m_other_side->m_fifo_available.release(write_count);
         }
-        log(this->local_endpoint().address() + ":" + this->local_endpoint().port()+" send "+ write_count+" bytes to "+ m_other_side->local_endpoint().address() + ":" + m_other_side->local_endpoint().port());
-        this->m_other_side->m_fifo_available.release(write_count);
     }
     size_t FakeSocket::read(ByteBuff& buffer) {
         if (m_fifo_available.id == "")
             m_fifo_available.id = this->local_endpoint().address() + ":" + this->local_endpoint().port();
-        if (!open) throw new read_error("Error: can't read: socket closed");
+        if (!m_open || !m_fifo_mutex) throw read_error("Error: can't read: socket closed");
+
+
+        if (!m_open) error("Error: throw exception don't work!");
+
         size_t old_pos = buffer.position();
         m_fifo_available.acquire(buffer.available());
         {
-            std::lock_guard lock(this->m_fifo_mutex);
-            if (!open) throw new read_error("Error: can't read: socket closed");
+            std::lock_guard lock{ *m_fifo_mutex };
+            if (!m_open) throw read_error("Error: can't read: socket closed");
+            if (!m_open) error("Error: throw exception don't work!");
             assert(this->m_fifo.size() >= buffer.available());
             while (buffer.available() > 0 && !this->m_fifo.empty()) {
                 buffer.put(this->m_fifo.front());
@@ -120,24 +127,43 @@ namespace supercloud {
         //create connection
         new_socket->m_other_side = other_side;
         other_side->m_other_side = new_socket.get();
+        new_socket->m_fifo_mutex.reset(new std::mutex{});
+        other_side->m_fifo_mutex = new_socket->m_fifo_mutex;
+        //reset fields that may be problematic
+        new_socket->m_fifo_available.drain();
+        other_side->m_fifo_available.drain();
+        new_socket->m_fifo.clear();
+        other_side->m_fifo.clear();
         //set sockets as open
-        {std::lock_guard lock(new_socket->m_fifo_mutex);
-            new_socket->open = true;
-        }
-        {std::lock_guard lock(other_side->m_fifo_mutex);
-            other_side->open = true;
+        {std::lock_guard lock{ *new_socket->m_fifo_mutex };
+            new_socket->m_open = true;
+            other_side->m_open = true;
         }
         // propagate to server thread.
         m_server.ask_listen(new_socket);
         //return true;
     }
 
+    void FakeSocket::close() {
+        if (m_open && this->m_fifo_mutex) {
+            std::lock_guard lock{ *this->m_fifo_mutex };
+            m_open = false;
+            if (m_other_side) {
+                this->m_other_side->m_open = false;
+                this->m_other_side->m_other_side = nullptr;
+                this->m_other_side->m_fifo_available.release(uint32_t(-1));
+            }
+            m_other_side = nullptr;
+            this->m_fifo_available.release(uint32_t(-1));
+        }
+    };
+
     /////////////////////////////// FakeServerSocket //////////////////////////////////////////////////////////////////
 
     void FakeServerSocket::init(uint16_t port)  {
         ServerSocket::init(port);
         listener.reset(new FakeSocket{ m_endpoint, EndPoint{"",0}, *this });
-        m_fake_network->addSocket(listener.get());
+        m_fake_network->addSocket(std::weak_ptr{ listener });
     }
     std::shared_ptr<Socket> FakeServerSocket::listen() {
         //clean
@@ -162,12 +188,13 @@ namespace supercloud {
         return connection_socket;
     }
     bool FakeServerSocket::connect(FakeSocket* to_connect) {
-        std::optional<FakeSocket*> listener = m_fake_network->getSocket(to_connect->request_endpoint());
+        std::optional<std::weak_ptr<FakeSocket>> listener = m_fake_network->getSocket(to_connect->request_endpoint());
         if (listener.has_value()) {
-            listener.value()->ask_for_connect(to_connect);
-            return true;
-        } else {
-            return false;
+            if (auto ptr = listener.value().lock(); ptr) {
+                ptr->ask_for_connect(to_connect);
+                return true;
+            }
         }
+        return false;
     }
 }

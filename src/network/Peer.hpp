@@ -8,13 +8,13 @@
 
 #include "../utils/ByteBuff.hpp"
 #include "../utils/Utils.hpp"
+#include "ClusterManager.hpp"
 #include "networkAdapter.hpp"
 
 namespace supercloud {
 
 	class PhysicalServer;
 	class Peer;
-	typedef std::shared_ptr<Peer> PeerPtr;
 
 	/**
 	 * Manage the connection with an other physical server: Check if it's alive, send and receive data.
@@ -49,14 +49,31 @@ namespace supercloud {
 			// connection direction
 			FROM_ME =		1 << 8, //  If i'm the one who initiate the connection.
 		};
+		static inline std::string connectionStateToString(ConnectionState state) {
+			std::stringstream ss;
+			if (state & US) ss << " | US";
+			if (state & DATABASE) ss << " | DATABASE";
+			if (state & ENTRY_POINT) ss << " | ENTRY_POINT";
+			if (state & TEMPORARY) ss << " | TEMPORARY";
+			if (state & CONNECTING) ss << " | CONNECTING";
+			if (state & CONNECTED) ss << " | CONNECTED";
+			if (state & ALIVE_IN_NETWORK) ss << " | ALIVE_IN_NETWORK";
+			if (state & DISCONNECTED) ss << " | DISCONNECTED";
+			if (state & FROM_ME) ss << " | FROM_ME";
+			std::string str = ss.str();
+			if (str.length() > 3) {
+				return str.substr(3);
+			}
+			return str;
+		}
 
 	private:
 		PhysicalServer& myServer;
 
 		// private Socket connexion;
 		// private InetSocketAddress address;
-		uint16_t m_computer_id = NO_COMPUTER_ID; //unique id for the computer, private-public key protected.
-		uint64_t m_peer_id = NO_PEER_ID; //use for leader election, connection establishment
+		ComputerId m_computer_id = NO_COMPUTER_ID; //unique id for the computer, private-public key protected.
+		PeerId m_peer_id = NO_PEER_ID; //use for leader election, connection establishment
 
 		std::string m_address;
 		uint16_t m_port = 0;
@@ -111,7 +128,21 @@ namespace supercloud {
 
 		//Cipher encoder = null;
 		//Cipher decoder = null;
-
+		//allow IdentityManager to set our computerid.
+		void setComputerId(ComputerId cid) {
+			this->m_computer_id = cid;
+		}
+	public:
+		class ComputerIdSetter
+		{
+		private:
+			static inline void setComputerId(Peer& obj, ComputerId new_cid)
+			{
+				obj.setComputerId(new_cid);
+			}
+			friend class IdentityManager;
+		};
+		friend class ComputerIdSetter;
 	protected:
 
 		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state) : m_state(state), myServer(physicalServer), m_address(inetAddress), m_port(port), createdAt(get_current_time_milis()) {}
@@ -144,13 +175,13 @@ namespace supercloud {
 		void readMessage();
 
 		//// getters  ///////////////////////////////////////////////////////////////////
-		void setPeerId(uint64_t new_id);
+		void setPeerId(PeerId new_id);
 
 		PhysicalServer& getMyServer() {
 			return myServer;
 		}
 
-		uint64_t getPeerId() const {
+		PeerId getPeerId() const {
 			return m_peer_id;
 		}
 
@@ -168,15 +199,15 @@ namespace supercloud {
 			return m_port;
 		}
 
+		void setPort(uint16_t port) {
+			m_port = port;
+		}
+
 		bool isAlive() const {
 			return alive.load();
 		}
 		bool initiatedByMe() {
 			return 0 != (getState() & ConnectionState::FROM_ME);
-		}
-
-		void setPort(uint16_t port) {
-			m_port = port;
 		}
 
 		std::mutex& synchronize() { return m_peer_mutex; }
@@ -191,66 +222,8 @@ namespace supercloud {
 
 		void close();
 
-		void setComputerId(uint16_t cid) {
-			this->m_computer_id = cid;
-		}
-
-		uint16_t getComputerId() const {
+		ComputerId getComputerId() const {
 			return m_computer_id;
-		}
-
-	};
-
-
-	class PeerList : public std::vector<PeerPtr> {
-	public:
-		PeerList() : vector() {}
-
-		PeerList(const std::initializer_list<PeerPtr>& c) : vector(c) {}
-		PeerList(std::initializer_list<PeerPtr>&& c) : vector(c) {}
-		PeerList(const std::vector<PeerPtr>& c) : vector(c) {}
-		PeerList(std::vector<PeerPtr>&& c) : vector(c) {}
-
-		PeerList(size_t initialCapacity) : vector() {
-			reserve(initialCapacity);
-		}
-
-		std::optional<PeerPtr> get(const Peer& other) {
-			for (PeerPtr& e : *this) {
-				if (e->getPeerId() == other.getPeerId()) {
-					return e;
-				}
-			}
-			return {};
-		}
-
-		std::vector<std::shared_ptr<Peer>> getAll(const Peer& other) {
-			std::vector<PeerPtr> list;
-			for (PeerPtr& e : *this) {
-				if (e->getPeerId() == other.getPeerId()) {
-					list.push_back(e);
-				}
-			}
-			return list;
-		}
-
-		//check if the Peer pointer is stored here
-		bool contains(PeerPtr& peer) {
-			for (PeerPtr& e : *this) {
-				if (e.get() == peer.get()) {
-					return true;
-				}
-			}
-			return false;
-		}
-		bool erase_from_ptr(PeerPtr& peer) {
-			for (auto it = this->begin(); it != end(); ++it) {
-				if (it->get() == peer.get()) {
-					this->erase(it);
-					return true;
-				}
-			}
-			return false;
 		}
 
 	};

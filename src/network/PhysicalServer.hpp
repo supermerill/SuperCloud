@@ -6,13 +6,14 @@
 #include <map>
 #include <mutex>
 
-#include "ClusterManager.hpp"
 #include "../utils/ByteBuff.hpp"
-#include "Peer.hpp"
-#include "networkAdapter.hpp"
+#include "../utils/Utils.hpp"
+#include "ClusterManager.hpp"
+#include "NetworkAdapter.hpp"
 
 namespace supercloud {
 
+    class Peer;
     class IdentityManager;
     class ClusterAdminMessageManager;
     class ConnectionMessageManager;
@@ -21,8 +22,8 @@ namespace supercloud {
      *
      * ids: <br>
      * * clusterId (uint64_t) -> id of the cluster, ie the virtual drive. It's public<br>
-     * * peerId (uint64_t)(serverId/connectionId/senderId) -> id of the program that is ending and recieving stuff ont he network. it's the working id, to identify the current connection.<br>
-     * * computerId (uint16_t) -> id of an instance of the network. it's a verified public/private AES verifiedaprotected id to identify a peer/computer that can grab data and maybe make modifications.<br>
+     * * peerId (PeerId)(serverId/connectionId/senderId) -> id of the program that is ending and recieving stuff ont he network. it's the working id, to identify the current connection.<br>
+     * * computerId (ComputerId) -> id of an instance of the network. it's a verified public/private AES verifiedaprotected id to identify a peer/computer that can grab data and maybe make modifications.<br>
      *
      * <p>
      * note: this part is made from memory 1 year after coding, so take it with a grain of salt<br>
@@ -51,8 +52,8 @@ namespace supercloud {
         // should be inetAddress ut it's implier with this to test in 1 pc.
         // private Map<PeerKey ,Peer> peers = new HashMap<>();
         // private Semaphore peersSemaphore = new Semaphore(1);
-        mutable std::recursive_mutex peers_mutex;
-        PeerList peers; // don't access this outside of semaphore. Use getters instead.
+        mutable std::recursive_mutex m_peers_mutex;
+        PeerList m_peers; // don't access this outside of semaphore. Use getters instead.
         std::shared_ptr<ServerSocket> m_listen_socket; // server socket
         //std::unique_ptr<std::thread> socketListener; //just a pointer to the detached thread handle.
         //std::unique_ptr<std::thread> updaterThread;
@@ -105,6 +106,7 @@ namespace supercloud {
         /// The updater function, it emit some timers and keeps the list of peers tidy.
         /// </summary>
         virtual void update();
+        void log_peers();
 
         /// <summary>
         /// If not started, create a new thread and listen on th eport for new connections.
@@ -116,10 +118,12 @@ namespace supercloud {
         /// </summary>
         void init(uint16_t listenPort);
 
-        uint64_t getPeerId() const override;
-        void setPeerId(uint64_t new_peer_id);
+        virtual PeerId getPeerId() const override;
+        void setPeerId(PeerId new_peer_id);
         bool hasPeerId() const { return getPeerId() != 0 && getPeerId() != NO_PEER_ID; }
-        uint16_t getComputerId() const override;
+        virtual ComputerId getComputerId() const override;
+        PeerPtr getPeer(); // get the peer that identify us (same as getIdentityManager.getSelfPeer()
+        virtual std::string getLocalIPNetwork() const override;
 
         const ServerConnectionState& getState() { return m_state; }
 
@@ -128,15 +132,15 @@ namespace supercloud {
         /// Check it, as it can be empty if the peer isn't connected.
         /// Can return closed/unconnected peers.
         /// </summary>
-        PeerPtr getPeerPtr(uint64_t senderId) const;
+        PeerPtr getPeerPtr(PeerId senderId) const;
         // same, prefer use your peer object if any
-        uint16_t getComputerId(uint64_t senderId) const override;
+        ComputerId getComputerId(PeerId senderId) const override;
         // same, prefer use your peer object if any
-        uint64_t getPeerIdFromCompId(uint16_t compId) const override;
+        PeerId getPeerIdFromCompId(ComputerId compId) const override;
         // really useful?
         size_t getNbPeers() const override;
         // don't use that
-        PeerList& getPeersUnsafe() { return peers; }
+        PeerList& getPeersUnsafe() { return m_peers; }
         // the current list of possibly connected peers.
         PeerList getPeersCopy() const override;
 
@@ -188,6 +192,8 @@ namespace supercloud {
 
         IdentityManager& getIdentityManager() override;
 
+        //update our private interface if needed
+        void checkSelfPrivateInterface(const Socket& socket);
         
         virtual void initializeNewCluster() override;
 

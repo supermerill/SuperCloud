@@ -41,10 +41,11 @@ namespace supercloud::test {
                     data_1.registered_peer_id.insert(i);
                 }
                 if (rand_u8() % 13 == 1) {
-                    data_1.connected_computer_id.insert(i);
                 }
                 if (rand_u8() % 11 == 1) {
-                    data_1.connected_peer_id.insert(i);
+                    ComputerId cid = rand_u8();
+                    data_1.connected_peer_id[i] = cid;
+                    data_1.connected_computer_id.insert(cid);
                 }
             }
             ByteBuff buff_1 = messageManager->create_SEND_SERVER_LIST_msg(data_1);

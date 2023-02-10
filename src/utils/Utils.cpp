@@ -46,6 +46,11 @@ namespace std {
 		}
 		return false;
 	}
+
+	void counting_semaphore::drain() {
+		std::lock_guard<decltype(mutex_)> lock(mutex_);
+		count_ = 0;
+	}
 }
 
 namespace supercloud{
@@ -89,6 +94,36 @@ namespace supercloud{
 		return id2str[type];
 	}
 
+
+	std::string u8_hex(uint8_t data)
+	{
+		std::stringstream stream;
+		stream << std::hex << std::setfill('0') << std::setw(2) << uint16_t(data);
+		return stream.str();
+	}
+	std::string to_hex(std::vector<uint8_t> vec)
+	{
+		std::stringstream stream;
+		stream << std::hex << std::setfill('0');
+		for (uint8_t val : vec) {
+			stream << std::setw(2) << uint16_t(val);
+		}
+		return stream.str();
+	}
+	std::vector<uint8_t> from_hex(std::string serialized)
+	{
+		size_t len = serialized.length();
+		std::vector<uint8_t> out;
+		for (size_t i = 0; i < len; i += 2) {
+			std::istringstream strm(serialized.substr(i, 2));
+			uint16_t x;
+			strm >> std::hex >> x;
+			out.push_back(uint8_t(x));
+		}
+		return out;
+	}
+
+
 	std::recursive_mutex stdout_mutex;
 	void error(std::string str) { 
 		std::lock_guard lock(stdout_mutex);  
@@ -101,7 +136,11 @@ namespace supercloud{
 		if (str[str.size() - 1] != '\n') std::cout << "\n"; 
 	}
 #if _DEBUG
-	void log(std::string str) { std::lock_guard lock(stdout_mutex); std::cout << str; if (str[str.size() - 1] != '\n') std::cout << "\n"; }
+	void log(std::string str) {
+		std::lock_guard lock(stdout_mutex);
+		std::cout << str;
+		if (str[str.size() - 1] != '\n') std::cout << "\n";
+	}
 #else
 	void log(std::string str) {}
 #endif

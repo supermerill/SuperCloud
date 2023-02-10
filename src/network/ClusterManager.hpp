@@ -2,16 +2,40 @@
 
 #include <cassert>
 #include <cstdint>
-#include <vector>
+#include <future>
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "../utils/Utils.hpp"
 #include "../utils/ByteBuff.hpp"
-#include "Peer.hpp"
 
 namespace supercloud {
 	class IdentityManager;
+
+	class Peer;
+	typedef std::shared_ptr<Peer> PeerPtr;
+	typedef std::vector<PeerPtr> PeerList;
+
+	typedef uint64_t PeerId;
+	//#define serializePeerId(buff,pid) buff.putULong(pid)
+#define serializePeerId putULong
+#define deserializePeerId getULong
+
+	typedef uint32_t ComputerId;
+#define serializeComputerId putUInt
+#define deserializeComputerId getUInt
+
+	constexpr ComputerId NO_COMPUTER_ID = ComputerId(-1);
+	constexpr uint64_t NO_CLUSTER_ID = uint64_t(-1);
+	constexpr PeerId NO_PEER_ID = PeerId(-1);
+
+	//TODO crypt
+	typedef std::vector<uint8_t> PublicKey; //can't use string because 0x00 create problems.
+	typedef std::vector<uint8_t> PrivateKey;
+	typedef std::vector<uint8_t> SecretKey;
+
 
 	enum class UnnencryptedMessageType : uint8_t {
 		/// <summary>
@@ -118,16 +142,19 @@ namespace supercloud {
 	protected:
 		size_t m_something_connecting = 0;
 		mutable std::mutex mutex;
-		std::set<uint16_t> m_connected;
+		std::set<ComputerId> m_connected;
 		bool has_connection = false;
 		bool is_disconnecting = false;
 		std::vector<std::string> logmsg;
+		bool m_is_computer_id_problematic = false;
 	public:
 		inline bool wasConnected() const { return has_connection; }
 		inline bool isConnected() const { return m_connected.size() > 0; }
-		inline bool isConnected(uint16_t computer_id) const { std::lock_guard lock{ mutex }; return m_connected.find(computer_id) != m_connected.end(); }
+		inline bool isConnected(ComputerId computer_id) const { std::lock_guard lock{ mutex }; return m_connected.find(computer_id) != m_connected.end(); }
 		inline bool isConnectionInProgress() const { return m_something_connecting>0; }
 		inline size_t getConnectionsCount() const { return m_connected.size(); }
+		inline void setOurComputerIdInvalid() { m_is_computer_id_problematic = true; }
+		inline bool isOurComputerIdProblematic() const { return m_is_computer_id_problematic; }
 
 		inline void beganConnection() {
 			std::lock_guard lock{ mutex };
@@ -143,7 +170,7 @@ namespace supercloud {
 				logmsg.push_back("abordConnection");
 			}
 		}
-		inline void finishConnection(uint16_t computer_id) {
+		inline void finishConnection(ComputerId computer_id) {
 			std::lock_guard lock{ mutex };
 			assert(m_something_connecting > 0);
 			assert(!is_disconnecting);
@@ -152,7 +179,7 @@ namespace supercloud {
 			has_connection = true;
 			logmsg.push_back(std::string("finishConnection ") + computer_id);
 		}
-		inline void removeConnection(uint16_t computer_id) {
+		inline void removeConnection(ComputerId computer_id) {
 			std::lock_guard lock{ mutex };
 			if (!is_disconnecting) {
 				auto it = m_connected.find(computer_id);
@@ -165,8 +192,6 @@ namespace supercloud {
 		}
 		inline void disconnect() {
 			std::lock_guard lock{ mutex };
-			assert(m_connected.empty());
-			assert(m_something_connecting == 0);
 			is_disconnecting = true;
 			has_connection = false;
 			m_connected.clear();
@@ -231,7 +256,7 @@ namespace supercloud {
 		 */
 		virtual void close() = 0;
 
-		virtual uint16_t getComputerId() const = 0;
+		virtual ComputerId getComputerId() const = 0;
 		virtual void launchUpdater() = 0;
 		virtual void initializeNewCluster() = 0;
 
@@ -240,13 +265,14 @@ namespace supercloud {
 		 * @param senderId the peerId (what we receive from the net message)
 		 * @return  the computerid or -1 if it's not connected (yet).
 		 */
-		virtual uint16_t getComputerId(uint64_t senderId) const = 0; //get a computerId from a peerId (senderId)
-		virtual uint64_t getPeerIdFromCompId(uint16_t compId) const = 0; //get a peerId (senderId) from a computerId
+		virtual ComputerId getComputerId(PeerId senderId) const = 0; //get a computerId from a peerId (senderId)
+		virtual PeerId getPeerIdFromCompId(ComputerId compId) const = 0; //get a peerId (senderId) from a computerId
 
 		virtual IdentityManager& getIdentityManager() = 0;
+		virtual std::string getLocalIPNetwork() const = 0;
 
 		//for logging
-		virtual uint64_t getPeerId() const = 0;
+		virtual PeerId getPeerId() const = 0;
 	};
 
 

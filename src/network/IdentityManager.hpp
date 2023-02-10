@@ -5,6 +5,7 @@
 #include "Peer.hpp"
 #include "ConnectionMessageManager.hpp"
 #include "ConnectionMessageManagerInterface.hpp"
+#include "NetUtils.hpp"
 
 #include <filesystem>
 #include <mutex>
@@ -13,10 +14,6 @@
 #include <vector>
 
 namespace supercloud{
-	//TODO crypt
-#define PublicKey std::string
-#define PrivateKey std::string
-#define SecretKey std::vector<uint8_t>
 
 class PhysicalServer;
 
@@ -64,17 +61,17 @@ protected:
 
 	//database peers
 	mutable std::mutex m_loaded_peers_mutex;
-	std::vector<PeerPtr> m_loaded_peers;
+	PeerList m_loaded_peers;
 	mutable std::mutex tempPubKey_mutex;
-	std::unordered_map<uint64_t, PublicKey> tempPubKey; // unidentified pub key
-	mutable std::mutex peer_data_mutex;
+	std::unordered_map<PeerId, PublicKey> tempPubKey; // unidentified pub key
+	mutable std::mutex m_peer_data_mutex;
 	std::unordered_map<PeerPtr, PeerData> m_peer_2_peerdata;
 	PhysicalServer& serv;
 
 	ComputerIdState myComputerIdState = ComputerIdState::NOT_CHOOSEN;
 	int64_t timeChooseId = 0;
 
-	std::unordered_map<uint64_t, std::string> m_pid_2_emitted_msg;
+	std::unordered_map<PeerId, std::string> m_pid_2_emitted_msg;
 	mutable std::mutex save_mutex;
 	std::filesystem::path filepath;
 	uint64_t clusterId = NO_CLUSTER_ID; // the id to identify the whole cluster
@@ -94,21 +91,25 @@ public:
 	PeerPtr getSelfPeer() { return m_myself; }
 	uint64_t getClusterId() const { return clusterId; }
 	ComputerIdState getComputerIdState() const { return myComputerIdState; }
-	uint16_t getComputerId() const { return m_myself->getComputerId(); }
-	void setComputerId(uint16_t myNewComputerId, ComputerIdState newState);
+	ComputerId getComputerId() const { return m_myself->getComputerId(); }
+	void setComputerId(ComputerId myNewComputerId, ComputerIdState newState);
 	/// <summary>
 	/// Return a copy of the list of loaded peers (from the stored file, and the data sent by the actual connected peers). Please don't modify the peers.
 	/// </summary>
 	/// <returns>a new vector of my peerPtr.</returns>
-	std::vector<PeerPtr> getLoadedPeers() { std::lock_guard lock{ m_loaded_peers_mutex };  return m_loaded_peers; }
-	PeerPtr getLoadedPeer(uint16_t cid);
+	PeerList getLoadedPeers() { std::lock_guard lock{ m_loaded_peers_mutex };  return m_loaded_peers; }
+	PeerPtr getLoadedPeer(ComputerId cid);
+	PeerData getPeerData(ComputerId cid) { return getPeerData(getLoadedPeer(cid)); }
+	bool hasPeerData(PeerPtr peer) const; // shouldnt be necessary?
 	PeerData getPeerData(PeerPtr peer) const;
+	PeerData getSelfPeerData() const { return getPeerData(m_myself); }
+	//don't use it outside of debugging
 	bool setPeerData(const PeerData& original, const PeerData& new_data);
 
-	uint64_t getTimeChooseId(){ return timeChooseId; }
+	int64_t getTimeChooseId(){ return timeChooseId; }
 	PublicKey getPublicKey() const { return publicKey; }
 	PublicKey getPublicKey(PeerPtr key) const {
-		{ std::lock_guard lock(this->peer_data_mutex);
+		{ std::lock_guard lock{ this->m_peer_data_mutex };
 			auto it = m_peer_2_peerdata.find(key);
 			if (it != m_peer_2_peerdata.end())
 				return it->second.rsa_public_key;
@@ -128,8 +129,8 @@ public:
 			}
 		}
 		//also erase the bad computer id
-		{ std::lock_guard lock(this->peer_data_mutex);
-		m_peer_2_peerdata.erase(badPeer);
+		{ std::lock_guard lock{ this->m_peer_data_mutex };
+			m_peer_2_peerdata.erase(badPeer);
 		}
 	}
 
@@ -157,7 +158,7 @@ public:
 	//fusion (or add) a connected peer to our lists 
 	void fusionWithConnectedPeer(PeerPtr peer);
 	// add an unconnected peer to our list of possible peers.
-	PeerPtr addNewPeer(uint16_t computerId, const PeerData& data);
+	PeerPtr addNewPeer(ComputerId computerId, const PeerData& data);
 
 	//request->send->receive a public key from a peer
 	//void requestPublicKey(Peer& peer);

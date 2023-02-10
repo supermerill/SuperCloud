@@ -169,14 +169,17 @@ namespace supercloud {
 		int32_t getInt();
 		ByteBuff& putInt(const int32_t value);
 
+		uint32_t getUInt() { return uint32_t(getInt()); }
+		ByteBuff& putUInt(const uint32_t value) { return putInt(int32_t(value)); }
+
 		int64_t getLong();
 		ByteBuff& putLong(const int64_t value);
 
 		uint64_t getULong() { return uint64_t(getLong()); }
 		ByteBuff& putULong(const uint64_t value) { return putLong(int64_t(value)); }
 
-		ByteBuff& putSize(const uint64_t num);
-		uint64_t getSize();
+		ByteBuff& putSize(const size_t num);
+		size_t getSize();
 
 		float getFloat();
 		ByteBuff& putFloat(const float value);

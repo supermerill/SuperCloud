@@ -17,9 +17,12 @@ namespace supercloud {
 		return this->m_socket->get_local_ip_network();
 	}
 
-	void Peer::setPeerId(uint64_t new_id) {
+	void Peer::setPeerId(PeerId new_id) {
 		if (myServer.getIdentityManager().getSelfPeer().get() == this) {
 			log(std::to_string(myServer.getPeerId() % 100) + " CHANGE MY PID from " + std::to_string(m_peer_id % 100) + " to " + (new_id%100));
+			if (m_peer_id != NO_PEER_ID && m_peer_id != 0) {
+				log(std::to_string(myServer.getPeerId() % 100) + " THIS SHOULDN't happen (unless you're really unlucke) " + std::to_string(m_peer_id % 100) + " to " + (new_id % 100));
+			}
 		} else {
 			log(std::to_string(myServer.getPeerId() % 100) + " change PID from " + std::to_string(m_peer_id % 100) + " to " + (new_id % 100));
 		}
@@ -44,7 +47,8 @@ namespace supercloud {
 		}
 
 		// check if i'm not a duplicate
-		if (myServer.getPeersCopy().getAll(*this).size() > 1 || myServer.getPeerId() == getPeerId()) {
+		PeerList all_peers = myServer.getPeersCopy();
+		if (std::find_if(all_peers.begin(), all_peers.end(), [this](const PeerPtr& peer) {return peer->getPeerId() == this->getPeerId(); }) != all_peers.end() || myServer.getPeerId() == getPeerId()) {
 			// i'm a duplicate, kill me!
 			myServer.removeExactPeer(this);
 			return;
@@ -342,9 +346,9 @@ namespace supercloud {
 					}
 				}
 			}
-			catch (std::exception e) {
+			catch (const std::exception& e) {
 				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " readMessage ERROR in socket read: " + e.what());
-				throw std::runtime_error(e.what());
+				throw read_error(e.what());
 			}
 			try{
 				//decode mesage
@@ -377,20 +381,20 @@ namespace supercloud {
 				myServer.propagateMessage(this->ptr(), (uint8_t)message_id, buff_message);
 
 			}
-			catch (std::exception e) {
+			catch (const std::exception& e) {
 				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " readMessage ERROR in message propagation: " + e.what() );
-				throw std::runtime_error(e.what());
+				throw read_error(e.what());
 			}
 
 		}
-		catch (std::exception e) {
+		catch (const std::exception& e) {
 			error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " readMessage FATAL ERROR (closing socket): " + e.what());
 			close();
 		}
 	}
 
 	void Peer::close() {
-		log(std::string("Closing ") + getPeerId() % 100);
+		log(std::to_string(myServer.getPeerId() % 100) + std::string(" Closing peer ") + getPeerId() % 100);
 		//log(std::to_string(Thread.getAllStackTraces().get(Thread.currentThread())));
 		//set as not alive
 		bool was_alive = alive.exchange(false);
@@ -428,7 +432,7 @@ namespace supercloud {
 				}
 			}
 			catch (std::exception e) {
-				std::cerr << "ERROR: " << e.what() << "\n";
+				error(std::to_string(myServer.getPeerId() % 100) + "FATAL ERROR while closing: " + e.what());
 			}
 		}
 

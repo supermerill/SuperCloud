@@ -355,7 +355,7 @@ int32_t ByteBuff::getTrailInt()
 
 }
 
-ByteBuff& ByteBuff::putSize(const uint64_t num) {
+ByteBuff& ByteBuff::putSize(const size_t num) {
     //does it have less than 29 significant bits? (can't be negative as it's unsigned)
     if ( (num>>28) == 0) {
         //use trail int
@@ -367,7 +367,7 @@ ByteBuff& ByteBuff::putSize(const uint64_t num) {
         return *this;
     }
 }
-uint64_t ByteBuff::getSize() {
+size_t ByteBuff::getSize() {
 
     readcheck(1);
     const uint8_t b = this->m_buffer[this->m_position];
@@ -377,7 +377,7 @@ uint64_t ByteBuff::getSize() {
         return getULong();
     } else {
         //trailint
-        return uint64_t(getTrailInt());
+        return size_t(getTrailInt());
     }
 
 }

@@ -35,7 +35,7 @@ namespace supercloud{
 		}
 		this->privateKey = this->publicKey;
 		// this->publicKey is just a cache for m_peer_2_peerdata[getComputerId()].rsa_public_key
-		{std::lock_guard lock(peer_data_mutex);
+		{std::lock_guard lock(m_peer_data_mutex);
 			assert(m_peer_2_peerdata.find(m_myself) != m_peer_2_peerdata.end());
 			m_peer_2_peerdata[this->m_myself].rsa_public_key = this->publicKey;
 		}
@@ -53,7 +53,7 @@ namespace supercloud{
 	//	return this->privateKey;
 	//}
 
-	PeerPtr IdentityManager::getLoadedPeer(uint16_t cid) {
+	PeerPtr IdentityManager::getLoadedPeer(ComputerId cid) {
 		std::lock_guard lock{ m_loaded_peers_mutex };
 		for (PeerPtr& peer : this->m_loaded_peers) {
 			if (peer->getComputerId() == cid)
@@ -63,7 +63,7 @@ namespace supercloud{
 	}
 
 	IdentityManager::PeerData IdentityManager::getPeerData(PeerPtr peer) const {
-		std::lock_guard lock(peer_data_mutex);
+		std::lock_guard lock(m_peer_data_mutex);
 		auto it = m_peer_2_peerdata.find(peer);
 		if (it != m_peer_2_peerdata.end()) {
 			assert(it->second.peer == peer);
@@ -72,8 +72,14 @@ namespace supercloud{
 		assert(false);
 		return PeerData{};
 	}
+
+	bool IdentityManager::hasPeerData(PeerPtr peer) const {
+		std::lock_guard lock(m_peer_data_mutex);
+		return m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end();
+	}
+
 	bool IdentityManager::setPeerData(const PeerData& original, const PeerData& new_data) {
-		std::lock_guard lock(peer_data_mutex);
+		std::lock_guard lock(m_peer_data_mutex);
 		assert(original.peer == new_data.peer);
 		if (!original.peer) return false;
 		auto it = m_peer_2_peerdata.find(original.peer);
@@ -82,7 +88,7 @@ namespace supercloud{
 				it->second = new_data;
 			}
 		}
-		return false;
+		return true;
 	}
 
 	void IdentityManager::create_from_install_file(const std::filesystem::path& currrent_filepath) {
@@ -112,7 +118,7 @@ namespace supercloud{
 						for (int j = i + 1; j < m_loaded_peers.size();j++)
 							assert(m_loaded_peers[i].get() != m_loaded_peers[j].get());
 				}
-				{std::lock_guard lock(peer_data_mutex);
+				{std::lock_guard lock(m_peer_data_mutex);
 					//create associated peerdata
 					m_peer_2_peerdata[p].peer = p;
 					m_peer_2_peerdata[p].private_interface = PeerConnection{ paramsNet.get("PeerIp"), uint16_t(paramsNet.getInt("PeerPort")), true, {} };
@@ -154,11 +160,11 @@ namespace supercloud{
 			}
 		}
 
-		std::vector<PeerPtr> loaded_peers_copy;
+		PeerList loaded_peers_copy;
 		Parameters params_server_db{ currrent_filepath };
 		this->clusterId = params_server_db.getLong("clusterId");
 		this->myComputerIdState = (ComputerIdState)params_server_db.getInt("computerIdState");
-		this->m_myself->setComputerId((uint16_t)params_server_db.getInt("computerId"));
+		Peer::ComputerIdSetter::setComputerId(*this->m_myself, (ComputerId)params_server_db.getInt("computerId"));
 		uint64_t old_peer_id = (uint64_t)params_server_db.getLong("peerId", NO_PEER_ID);
 		if (this->m_myself->getPeerId() == 0 || this->m_myself->getPeerId() == NO_PEER_ID) {
 			std::lock_guard lock{ this->m_myself->synchronize() };
@@ -166,27 +172,27 @@ namespace supercloud{
 			this->m_myself->setState(this->m_myself->getState() | Peer::ConnectionState::DATABASE);
 		}
 		this->passphrase = params_server_db.get("passphrase");
-		this->publicKey = params_server_db.get("publicKey");
-		this->privateKey = params_server_db.get("privateKey"); //... recreated per peer. no need to sotre it.
+		this->publicKey = from_hex(params_server_db.get("publicKey"));
+		this->privateKey = from_hex(params_server_db.get("privateKey"));
 		assert(publicKey.size() != 0);
-		{std::lock_guard lock(peer_data_mutex);
+		{std::lock_guard lock(m_peer_data_mutex);
 			assert(m_peer_2_peerdata.find(m_myself) != m_peer_2_peerdata.end());
 			m_peer_2_peerdata[this->m_myself].rsa_public_key = this->publicKey;
 		}
 		size_t nbPeers = size_t(params_server_db.getInt("nbPeers", 0));
 		//FIXME: isn't it more safe to ock the two locks? (but there is then a deadlock possibility...). Or maybe have only one lock?
-		{std::lock_guard lock(peer_data_mutex);
+		{std::lock_guard lock(m_peer_data_mutex);
 			for (size_t i = 0; i < nbPeers; i++) {
-				uint16_t dist_id = uint16_t(params_server_db.getInt("peer" + std::to_string(i) + "_id"));
+				ComputerId dist_id = ComputerId(params_server_db.getInt("peer" + std::to_string(i) + "_cid"));
 				PeerPtr p = Peer::create(serv, "", 0, Peer::ConnectionState::DATABASE);
-				p->setComputerId(dist_id);
+				Peer::ComputerIdSetter::setComputerId(*p,dist_id);
 				assert(dist_id != 0);
 				assert(dist_id != NO_COMPUTER_ID);
 				loaded_peers_copy.push_back(p);
 				assert(m_peer_2_peerdata.find(p) != m_peer_2_peerdata.end());
 				//create associated peerdata
 				PeerData& data = m_peer_2_peerdata[p];
-				data.rsa_public_key = params_server_db.get("peer" + std::to_string(i) + "_publicKey");
+				data.rsa_public_key = from_hex(params_server_db.get("peer" + std::to_string(i) + "_publicKey"));
 				const std::string& dist_ip = params_server_db.get("peer" + std::to_string(i) + "_ip");
 				uint16_t dist_port = uint16_t(params_server_db.getInt("peer" + std::to_string(i) + "_port"));
 				bool dist_conn_by_me = params_server_db.getBool("peer" + std::to_string(i) + "_succeed");
@@ -220,21 +226,21 @@ namespace supercloud{
 			params_server_db.setLong("peerId", this->m_myself->getPeerId());
 		}
 		params_server_db.set("passphrase", this->passphrase);
-		params_server_db.set("publicKey", this->publicKey);
-		params_server_db.set("privateKey", this->privateKey);
-		std::vector<PeerPtr> loaded_peers_copy;
+		params_server_db.set("publicKey", to_hex(this->publicKey));
+		params_server_db.set("privateKey", to_hex(this->privateKey));
+		PeerList loaded_peers_copy;
 		{ std::lock_guard lockpeers{ m_loaded_peers_mutex };
 			loaded_peers_copy = this->m_loaded_peers;
 		}
 		params_server_db.setInt("nbPeers", int32_t(loaded_peers_copy.size()));
 		size_t peer_idx = 0;
-		{std::lock_guard<std::mutex> lockpdata(this->peer_data_mutex);
+		{std::lock_guard<std::mutex> lockpdata(this->m_peer_data_mutex);
 			for (const PeerPtr& peer : loaded_peers_copy) {
 				auto found = m_peer_2_peerdata.find(peer);
 				if (found != m_peer_2_peerdata.end() && found->second.peer) {
-					params_server_db.setInt("peer" + std::to_string(peer_idx) + "_id", peer->getComputerId());
+					params_server_db.setInt("peer" + std::to_string(peer_idx) + "_cid", peer->getComputerId());
 					const PeerData& data = found->second;
-					params_server_db.set("peer" + std::to_string(peer_idx) + "_publicKey", data.rsa_public_key);
+					params_server_db.set("peer" + std::to_string(peer_idx) + "_publicKey", to_hex(data.rsa_public_key));
 					if (data.private_interface) {
 						params_server_db.set("peer" + std::to_string(peer_idx) + "_ip", data.private_interface->address);
 						params_server_db.setInt("peer" + std::to_string(peer_idx) + "_port", data.private_interface->port);
@@ -267,8 +273,8 @@ namespace supercloud{
 		assert(connected_peer->getPeerId() != 0);
 		assert(connected_peer->getPeerId() != NO_COMPUTER_ID);
 		assert(connected_peer->getState() & Peer::ConnectionState::CONNECTING);
+		PeerPtr deletedPeer = nullptr;
 		{ std::lock_guard lock{ m_loaded_peers_mutex };
-			Peer* deletedPeer = nullptr;
 			bool already_inside = false;
 			foreach(peer_it, m_loaded_peers) {
 				if ((*peer_it)->getComputerId() == connected_peer->getComputerId()) {
@@ -276,9 +282,8 @@ namespace supercloud{
 					if ((*peer_it) == connected_peer && !already_inside) {
 						already_inside = true;
 					} else {
-						deletedPeer = (*peer_it).get();
+						deletedPeer = (*peer_it);
 						//fusionPeers(connectedPeer, (*peer_it)); // nothing to fusion
-						m_peer_2_peerdata.erase(*peer_it);
 						peer_it.erase();
 					}
 				}
@@ -291,15 +296,22 @@ namespace supercloud{
 				for (int j = i + 1; j < m_loaded_peers.size();j++)
 					assert(m_loaded_peers[i].get() != m_loaded_peers[j].get());
 		}
+		//update state
+		if (deletedPeer) {
+			std::lock_guard lock_peer{ deletedPeer->synchronize() };
+			deletedPeer->setState((deletedPeer->getState() & ~Peer::DATABASE) | Peer::TEMPORARY);
+
+		}
 		//replace also in the peerdata
-		//{ std::lock_guard lock(peer_data_mutex);
-		//	m_peer_2_peerdata[connected_peer].peer = connected_peer;
-		//}
+		if (deletedPeer) {
+			std::lock_guard lock(m_peer_data_mutex);
+			m_peer_2_peerdata.erase(deletedPeer);
+		}
 		assert(m_peer_2_peerdata.find(connected_peer) != m_peer_2_peerdata.end());
 		assert(m_peer_2_peerdata[connected_peer].peer == connected_peer);
 	}
 
-	PeerPtr IdentityManager::addNewPeer(uint16_t computerId, const PeerData& data) {
+	PeerPtr IdentityManager::addNewPeer(ComputerId computerId, const PeerData& data) {
 		assert(computerId != 0);
 		assert(computerId != NO_COMPUTER_ID);
 		bool not_found = false;
@@ -310,7 +322,7 @@ namespace supercloud{
 			not_found = m_loaded_peers.end() == search;
 			if (not_found) {
 				new_peer = Peer::create(serv, "", 0, Peer::ConnectionState::DATABASE);
-				new_peer->setComputerId(computerId);
+				Peer::ComputerIdSetter::setComputerId(*new_peer,computerId);
 				m_loaded_peers.push_back(new_peer);
 				for (int i = 0; i < m_loaded_peers.size(); i++)
 					for (int j = i + 1; j < m_loaded_peers.size();j++)
@@ -320,7 +332,7 @@ namespace supercloud{
 			}
 		}
 		if (not_found) {
-			std::lock_guard lock(peer_data_mutex);
+			std::lock_guard lock(m_peer_data_mutex);
 			//create associated peerdata
 			assert(m_peer_2_peerdata.find(new_peer) == m_peer_2_peerdata.end());
 			m_peer_2_peerdata[new_peer] = data;
@@ -339,7 +351,7 @@ namespace supercloud{
 		//std::cout+ &serv + " (sendPublicKey) emit GET_SERVER_PUBLIC_KEY to " + peer+"\n";
 		log(std::to_string(serv.getPeerId() % 100) + " (sendPublicKey) emit SEND_SERVER_PUBLIC_KEY to " + peer->getPeerId() % 100+"\n");
 		//ensure we have create a peer data for this peer
-		{ std::lock_guard lock(peer_data_mutex);
+		{ std::lock_guard lock(m_peer_data_mutex);
 			if (auto it = m_peer_2_peerdata.find(peer); it == m_peer_2_peerdata.end()) {
 				assert(peer->getState() & Peer::TEMPORARY);
 				m_peer_2_peerdata[peer].peer = peer;
@@ -360,7 +372,7 @@ namespace supercloud{
 	void IdentityManager::receivePublicKey(PeerPtr sender, ByteBuff& buffIn) {
 		//log(std::to_string(serv.getPeerId() % 100) + " (receivePublicKey) receive SEND_SERVER_PUBLIC_KEY from " + sender->getPeerId() % 100+"\n");
 		//ensure we have create a peer data for this peer
-		{ std::lock_guard lock(peer_data_mutex);
+		{ std::lock_guard lock(m_peer_data_mutex);
 			if (auto it = m_peer_2_peerdata.find(sender); it == m_peer_2_peerdata.end()) {
 				assert(sender->getState() & Peer::TEMPORARY);
 				m_peer_2_peerdata[sender].peer = sender;
@@ -368,18 +380,13 @@ namespace supercloud{
 		}
 		
 		//get pub Key
-		size_t nbBytes = buffIn.getSize();
-		//byte[] encodedPubKey = new byte[nbBytes];
-		std::shared_ptr<uint8_t> encodedPubKey{ new uint8_t[int32_t(nbBytes + 1)] };
-		buffIn.get(encodedPubKey.get(), 0, nbBytes);
-		encodedPubKey.get()[nbBytes] = 0;
-		const char* cstr_pub_key = reinterpret_cast<const char*>(encodedPubKey.get());
+		size_t nb_bytes = buffIn.getSize();
+		PublicKey dist_public_key = buffIn.get(nb_bytes);
 		//X509EncodedKeySpec bobPubKeySpec = new X509EncodedKeySpec(encodedPubKey);
 		//KeyFactory keyFactory = KeyFactory.getInstance("RSA");
 		//PublicKey distPublicKey = keyFactory.generatePublic(bobPubKeySpec);
-		PublicKey distPublicKey{ cstr_pub_key };
 		{ std::lock_guard lock(tempPubKey_mutex);
-			tempPubKey[sender->getPeerId()] = distPublicKey;
+			tempPubKey[sender->getPeerId()] = dist_public_key;
 			//				std::cout+serv.getId()%100+" (receivePublicKey) peer "+p.getConnectionId()%100+" has now a pub key of "+tempPubKey.get(p.getConnectionId())+"\n";
 		}
 	}
@@ -406,7 +413,7 @@ namespace supercloud{
 	IdentityManager::Identityresult IdentityManager::sendIdentity(PeerPtr peer, const std::string& messageToEncrypt, bool isRequest) {
 		log(std::to_string(serv.getPeerId() % 100) + " (sendIdentity" + isRequest + ") emit " + (isRequest ? "GET_IDENTITY" : "SEND_IDENTITY") + " to " + peer->getPeerId() % 100 + ", with message 2encrypt : " + messageToEncrypt+"\n");
 		//check if we have the public key of this peer
-		PublicKey theirPubKey = "";
+		PublicKey theirPubKey;
 		{ std::lock_guard lock(tempPubKey_mutex);
 			const auto& it_theirPubKey = tempPubKey.find(peer->getPeerId());
 			if (it_theirPubKey == tempPubKey.end()) {
@@ -422,7 +429,7 @@ namespace supercloud{
 		if (getComputerId() == NO_COMPUTER_ID) {
 			log(std::to_string(serv.getPeerId() % 100) + " (sendIdentity " + isRequest + ") but i have null id!! \n");
 			ByteBuff buff;
-			buff.putShort(NO_COMPUTER_ID);
+			buff.serializeComputerId(NO_COMPUTER_ID);
 			//send packet
 			if (!isRequest) {
 				log(std::to_string(serv.getPeerId() % 100) + " (sendIdentity " + isRequest + ") so i return '-1' \n");
@@ -436,8 +443,11 @@ namespace supercloud{
 		//encode msg
 		//Cipher cipher = Cipher.getInstance("RSA");
 		//cipher.init(Cipher.ENCRYPT_MODE, privateKey);
-		//ByteBuff buffEncoded = blockCipher(new ByteBuff().putShort(myComputerId).putUTF8(messageToEncrypt).putUTF8(passphrase).flip().toArray(), Cipher.ENCRYPT_MODE, cipher);
-		ByteBuff buffEncoded; buffEncoded.putShort(getComputerId()).putUTF8(messageToEncrypt).putUTF8(passphrase).flip();
+		//ByteBuff buffEncoded = blockCipher(new ByteBuff().serializeComputerId(myComputerId).putUTF8(messageToEncrypt).putUTF8(passphrase).flip().toArray(), Cipher.ENCRYPT_MODE, cipher);
+		ByteBuff buffEncoded;
+		buffEncoded.serializeComputerId(getComputerId())
+			.putUTF8(messageToEncrypt)
+			.putUTF8(passphrase).flip();
 
 		//encrypt more
 		//cipher.init(Cipher.ENCRYPT_MODE, theirPubKey);
@@ -473,7 +483,7 @@ namespace supercloud{
 		//log(std::to_string(serv.getPeerId() % 100) + " (answerIdentity) receive GET_IDENTITY to " + peer->getPeerId() % 100+"\n");
 
 
-		PublicKey theirPubKey = "";
+		PublicKey theirPubKey;
 		{ std::lock_guard lock(tempPubKey_mutex);
 			const auto& it_theirPubKey = tempPubKey.find(peer->getPeerId());
 			if (it_theirPubKey == tempPubKey.end()) {
@@ -495,7 +505,7 @@ namespace supercloud{
 		}
 
 		ByteBuff buffDecoded = getIdentityDecodedMessage(theirPubKey, buffIn);
-		uint16_t unverifiedCompId = (uint16_t)(buffDecoded.getShort()); ///osef short dist_cid = because we can't verify it.
+		ComputerId unverifiedCompId = buffDecoded.deserializeComputerId(); ///osef dist_cid = because we can't verify it.
 		std::string msgDecoded = buffDecoded.getUTF8();
 		std::string theirPwd = buffDecoded.getUTF8();
 		if (theirPwd != (passphrase)) {
@@ -515,7 +525,7 @@ namespace supercloud{
 		//log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) receive SEND_IDENTITY to " + peer->getPeerId() % 100+"\n");
 
 
-		PublicKey theirPubKey = "";
+		PublicKey theirPubKey;
 		{ std::lock_guard lock(tempPubKey_mutex);
 			const auto& it_theirPubKey = tempPubKey.find(peer->getPeerId());
 			if (it_theirPubKey == tempPubKey.end()) {
@@ -539,7 +549,7 @@ namespace supercloud{
 		ByteBuff buffDecoded = getIdentityDecodedMessage(theirPubKey, message);
 
 		//data extracted
-		uint16_t dist_cid = uint16_t(buffDecoded.getShort());
+		ComputerId dist_cid = buffDecoded.deserializeComputerId();
 		std::string msgDecoded = buffDecoded.getUTF8();
 		std::string theirPwd = buffDecoded.getUTF8();
 
@@ -568,26 +578,35 @@ namespace supercloud{
 			bool found = false;
 			PublicKey found_public_key;
 			//check if the public key is the same
-			{ std::lock_guard lock(peer_data_mutex);
+			{ std::lock_guard lock(m_peer_data_mutex);
 				auto search = this->m_peer_2_peerdata.find(peer);
 				found = search != this->m_peer_2_peerdata.end();
 				if (found) { found_public_key = search->second.rsa_public_key; }
 			}
 			// if not already in the storage and the key is valid, then accept & store it.
-			if (!found || found_public_key == "" && dist_cid > 0) {
+			if (!found || found_public_key.empty() && dist_cid > 0) {
 				std::string rsa_log_str;
 				for (uint8_t c : theirPubKey) {
 					rsa_log_str += u8_hex(c);
 				}
 				log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) assign new publickey "+ theirPubKey.size() + "{" + rsa_log_str + "} for computerid " + dist_cid + " , their pid=" + peer->getPeerId() % 100+"\n");
 				//validate this peer
-				{ std::lock_guard lock(peer_data_mutex);
+				{ std::lock_guard lock(m_peer_data_mutex);
 					assert(m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end());
 					this->m_peer_2_peerdata[peer].rsa_public_key = theirPubKey;
 				}
 				// the computerId is validated, as we can't compare it with previous rsa key (first time we see it).
 				//TODO: find a way to revoke the rsa key when comparing our server list with other peers. Like, if we found that the majority has a different public key, revoke our and take their.
-				peer->setComputerId(dist_cid);
+				{ std::lock_guard lock(m_loaded_peers_mutex);
+					if (contains(m_loaded_peers, peer)) {
+						//ensure it isn't duplicating computerid (inside our list, you can duplicating it outside, if it tries to connect to us)
+						if (std::find_if(m_loaded_peers.begin(), m_loaded_peers.end(), [dist_cid, &peer](const PeerPtr& test) {return test->getComputerId() == dist_cid && test != peer; }) != m_loaded_peers.end()) {
+							error("ERRRRRRRRROOOOOORR09742987");
+						}
+						assert(std::find_if(m_loaded_peers.begin(), m_loaded_peers.end(), [dist_cid, &peer](const PeerPtr& test) {return test->getComputerId() == dist_cid && test != peer; }) == m_loaded_peers.end());
+					}
+					Peer::ComputerIdSetter::setComputerId(*peer, dist_cid);
+				}
 				// remove the message sent: as it's now validated we don't need it anymore
 				if (this->m_pid_2_emitted_msg.find(peer->getPeerId()) != this->m_pid_2_emitted_msg.end())
 					this->m_pid_2_emitted_msg.erase(peer->getPeerId());
@@ -606,7 +625,15 @@ namespace supercloud{
 					return Identityresult::BAD;
 				} else {
 					log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) publickey ok for computerid " + dist_cid+"\n");
-					peer->setComputerId(dist_cid);
+					{ std::lock_guard lock(m_loaded_peers_mutex);
+						if (contains(m_loaded_peers, peer)) {
+							if (std::find_if(m_loaded_peers.begin(), m_loaded_peers.end(), [dist_cid, &peer](const PeerPtr& test) {return test->getComputerId() == dist_cid && test != peer; }) != m_loaded_peers.end()) {
+								error("ERRRRRRRRROOOOOORR01473897");
+							}
+							assert(std::find_if(m_loaded_peers.begin(), m_loaded_peers.end(), [dist_cid, &peer](const PeerPtr& test) {return test->getComputerId() == dist_cid && test != peer; }) == m_loaded_peers.end());
+						}
+						Peer::ComputerIdSetter::setComputerId(*peer, dist_cid);
+					}
 					//OK, now request a aes key
 				}
 			}
@@ -643,12 +670,18 @@ namespace supercloud{
 
 
 
-	void IdentityManager::setComputerId(uint16_t myNewComputerId, ComputerIdState newState) {
+	void IdentityManager::setComputerId(ComputerId myNewComputerId, ComputerIdState newState) {
 		//move our peerdata
-		{std::lock_guard lock{ this->peer_data_mutex };
-		uint16_t old = getComputerId();
+		{std::lock_guard lock{ this->m_peer_data_mutex };
+		ComputerId old = getComputerId();
 			msg = std::string("moved from ") + getComputerId() +" to "+ myNewComputerId;
-			m_myself->setComputerId(myNewComputerId);
+			{ std::lock_guard lock(m_loaded_peers_mutex);
+				if (std::find_if(m_loaded_peers.begin(), m_loaded_peers.end(), [myNewComputerId, this](const PeerPtr& test) {return test->getComputerId() == myNewComputerId && test != m_myself; }) != m_loaded_peers.end()) {
+					error("ERRRRRRRRROOOOOORR98769876");
+				}
+				assert(std::find_if(m_loaded_peers.begin(), m_loaded_peers.end(), [myNewComputerId, this](const PeerPtr& test) {return test->getComputerId() == myNewComputerId && test != m_myself; }) == m_loaded_peers.end());
+				Peer::ComputerIdSetter::setComputerId(*m_myself, myNewComputerId);
+			}
 			myComputerIdState = newState;
 			//log(std::to_string(myNewComputerId) + " setComputerId: from " + old + " to " + myNewComputerId+" :> "
 			//+(m_peer_2_peerdata.find(old) == m_peer_2_peerdata.end())+ ":"+ (m_peer_2_peerdata.find(myNewComputerId) != m_peer_2_peerdata.end())+":"+ m_peer_2_peerdata.find(myNewComputerId)->);
@@ -735,15 +768,15 @@ namespace supercloud{
 		assert(m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end());
 		//check if i'm able to do this
 		bool has_pub_key = false;
-		{ std::lock_guard lock(peer_data_mutex);
+		{ std::lock_guard lock(m_peer_data_mutex);
 			has_pub_key = peer->getComputerId() >= 0
 				&& this->m_peer_2_peerdata.find(peer) != this->m_peer_2_peerdata.end()
-				&& this->m_peer_2_peerdata[peer].rsa_public_key != "";
+				&& !this->m_peer_2_peerdata[peer].rsa_public_key.empty();
 		}
 		if (has_pub_key) {
 
 			SecretKey secretKey;
-			{ std::lock_guard lock(peer_data_mutex);
+			{ std::lock_guard lock(m_peer_data_mutex);
 				assert(m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end());
 				PeerData& data_peer = m_peer_2_peerdata[peer];
 				if (data_peer.aes_key.size() == 0) {
@@ -798,10 +831,10 @@ namespace supercloud{
 		//check if i'm able to do this
 		assert(m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end());
 		bool has_pub_key = false;
-		{ std::lock_guard lock(peer_data_mutex);
+		{ std::lock_guard lock(m_peer_data_mutex);
 			has_pub_key = peer->getComputerId() >= 0  
 				&& this->m_peer_2_peerdata.find(peer) != this->m_peer_2_peerdata.end()
-				&& this->m_peer_2_peerdata[peer].rsa_public_key != "";
+				&& !this->m_peer_2_peerdata[peer].rsa_public_key.empty();
 		}
 		if (has_pub_key) {
 			//decrypt the key
@@ -831,7 +864,7 @@ namespace supercloud{
 
 			//check if we already have one
 			uint8_t shouldEmit = 0;
-			{ std::lock_guard lock(peer_data_mutex);
+			{ std::lock_guard lock(m_peer_data_mutex);
 				auto& it_secretKey = m_peer_2_peerdata.find(peer);
 				if (it_secretKey == m_peer_2_peerdata.end()) {
 					//store the new one

@@ -37,14 +37,13 @@ namespace std{
 		void acquire(size_t number);
 
 		bool try_acquire();
+
+		void drain();
 	};
 }
 
 namespace supercloud{
 	//FIXME constexpr
-	inline const uint16_t NO_COMPUTER_ID = uint16_t(-1);
-	inline const uint64_t NO_CLUSTER_ID = uint64_t(-1);
-	inline const uint64_t NO_PEER_ID = uint64_t(-16);
 
 	typedef std::string InetAdress;
 	typedef std::pair<InetAdress, uint16_t> InetSocketAddress;
@@ -57,12 +56,9 @@ namespace supercloud{
 		return stream.str();
 	}
 
-	inline std::string u8_hex(uint8_t data)
-	{
-		std::stringstream stream;
-		stream << std::hex << std::setfill('0') << std::setw(2) << uint16_t(data);
-		return stream.str();
-	}
+	std::string u8_hex(uint8_t data);
+	std::string to_hex(std::vector<uint8_t> vec);
+	std::vector<uint8_t> from_hex(std::string serialized);
 
 	uint64_t rand_u63();
 	uint16_t rand_u16();

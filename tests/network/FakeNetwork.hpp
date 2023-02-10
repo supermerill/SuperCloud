@@ -19,16 +19,16 @@ namespace supercloud {
     class FakeLocalNetwork {
         //class c network, without the last dot
         std::string network_ip;
-        std::vector<FakeSocket*> computers;
+        std::vector<std::weak_ptr<FakeSocket>> computers;
         std::vector<std::shared_ptr<FakeRouter>> routers;
 
     public:
         FakeLocalNetwork(const std::string& net) : network_ip(net){}
         std::string getNetworkIp() { return network_ip; }
         void addRouter(std::shared_ptr<FakeRouter> router);
-        void addSocket(FakeSocket* computer);
-        std::optional<FakeSocket*> getSocket(const EndPoint& endpoint);
-        std::optional<FakeSocket*> getLocalSocket(const EndPoint& endpoint);
+        void addSocket(std::weak_ptr<FakeSocket> computer);
+        std::optional<std::weak_ptr<FakeSocket>> getSocket(const EndPoint& endpoint);
+        std::optional<std::weak_ptr<FakeSocket>> getLocalSocket(const EndPoint& endpoint);
     };
 
     class FakeRouter {
@@ -47,7 +47,7 @@ namespace supercloud {
         }
         FakeRouter& addNetwork(std::shared_ptr<FakeLocalNetwork> net);
         FakeRouter& set_route(const std::string& network, std::shared_ptr<FakeRouter> by);
-        std::optional<FakeSocket*> getSocket(const EndPoint& endpoint);
+        std::optional<std::weak_ptr<FakeSocket>> getSocket(const EndPoint& endpoint);
 
     };
 
@@ -73,12 +73,13 @@ namespace supercloud {
         EndPoint m_connect_to;
         // read queue with mutex & semaphore for thread-safety and waiting.
         std::deque<uint8_t> m_fifo;
-        std::mutex m_fifo_mutex;
+        //mutex to access to m_fifo, to m_other_side and to modify m_open. May be nullptr if m_open is false.
+        std::shared_ptr<std::mutex> m_fifo_mutex;
         std::counting_semaphore m_fifo_available{ 0 };
         //to write into the other queue
         FakeSocket* m_other_side;
         //if you have m_other_side, and so can read & write;
-        bool open = false;
+        bool m_open = false;
         //if we use connect(), then it's used to wait for the server socket thread to listen
         std::counting_semaphore wait_for_data{ 0 };
         // our creator, god bless him.
@@ -89,13 +90,14 @@ namespace supercloud {
         FakeSocket& operator=(const FakeSocket&) = delete; // can't copy
         virtual ~FakeSocket() {
             log("ERROR, closing SOCKET");
+            close();
         }
         virtual EndPoint local_endpoint() const override {
             return m_listen_from;
         }
         virtual EndPoint remote_endpoint() const override {
             return EndPoint{ "",0 };
-            //throw new std::runtime_error("Error, remote_endpoint is problematic");
+            //throw std::runtime_error("Error, remote_endpoint is problematic");
         }
         EndPoint request_endpoint() const {
             return m_connect_to;
@@ -104,12 +106,9 @@ namespace supercloud {
         virtual std::future<void> connect() override;
         virtual void write(ByteBuff& buffer) override;
         virtual size_t read(ByteBuff& buffer) override;
-        virtual bool is_open() const override { return open; }
+        virtual bool is_open() const override { return m_open; }
         virtual void cancel() override { close(); }
-        virtual void close() override {
-            std::lock_guard lock(this->m_fifo_mutex); 
-            open = false;
-        };
+        virtual void close() override;
 
         void ask_for_connect(FakeSocket* other_side);
     };
