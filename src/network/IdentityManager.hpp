@@ -5,7 +5,6 @@
 #include "Peer.hpp"
 #include "ConnectionMessageManager.hpp"
 #include "ConnectionMessageManagerInterface.hpp"
-#include "NetUtils.hpp"
 
 #include <filesystem>
 #include <mutex>

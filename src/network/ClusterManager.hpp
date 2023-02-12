@@ -23,9 +23,11 @@ namespace supercloud {
 #define serializePeerId putULong
 #define deserializePeerId getULong
 
+	// it's only 24bits of useful space
 	typedef uint32_t ComputerId;
 #define serializeComputerId putUInt
 #define deserializeComputerId getUInt
+	constexpr ComputerId COMPUTER_ID_MASK = 0x00FFFFFF;
 
 	constexpr ComputerId NO_COMPUTER_ID = ComputerId(-1);
 	constexpr uint64_t NO_CLUSTER_ID = uint64_t(-1);

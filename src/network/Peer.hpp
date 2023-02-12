@@ -128,11 +128,13 @@ namespace supercloud {
 
 		//Cipher encoder = null;
 		//Cipher decoder = null;
-		//allow IdentityManager to set our computerid.
+		//only IdentityManager can set our computerid.
 		void setComputerId(ComputerId cid) {
+			assert((cid & COMPUTER_ID_MASK) != 0);
 			this->m_computer_id = cid;
 		}
 	public:
+		//allow IdentityManager to set our computerid.
 		class ComputerIdSetter
 		{
 		private:

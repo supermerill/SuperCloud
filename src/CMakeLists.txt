@@ -30,6 +30,16 @@ add_library(libsupercloud STATIC
     utils/Utils.hpp
     utils/Parameters.cpp
     utils/Parameters.hpp
+	fs/base/FsElt.hpp
+	fs/base/FsObject.hpp
+	fs/base/FsChunk.hpp
+	fs/base/FsFile.hpp
+	fs/base/FsDirectory.hpp
+	fs/base/FsStorage.hpp
+	fs/inmemory/FsChunkInMemory.hpp
+	fs/inmemory/FsChunkInMemory.cpp
+	fs/inmemory/FsStorageInMemory.hpp
+	fs/inmemory/FsStorageInMemory.cpp
 )
 
 #encoding_check(libsupercloud)

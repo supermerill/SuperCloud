@@ -56,10 +56,10 @@ namespace std {
 namespace supercloud{
 
 
-	int64_t get_current_time_milis() {
+	DateTime get_current_time_milis() {
 		std::chrono::time_point time = std::chrono::system_clock::now(); // get the current time
 		std::chrono::duration since_epoch = time.time_since_epoch(); // get the duration since epoch
-		return std::chrono::duration_cast<std::chrono::milliseconds>(since_epoch).count();
+		return (DateTime)std::chrono::duration_cast<std::chrono::milliseconds>(since_epoch).count();
 	}
 
 	std::string id2str[256];

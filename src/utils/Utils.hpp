@@ -47,6 +47,7 @@ namespace supercloud{
 
 	typedef std::string InetAdress;
 	typedef std::pair<InetAdress, uint16_t> InetSocketAddress;
+	typedef int64_t DateTime;
 
 	template<class NUMERIC>
 	std::string to_hex_str(NUMERIC data)
@@ -69,7 +70,7 @@ namespace supercloud{
 
 	//inline void  compare(const std::string& fileName, int min, int max);
 
-	int64_t get_current_time_milis();
+	DateTime get_current_time_milis();
 
 	std::string messageId_to_string(uint8_t msgType);
 

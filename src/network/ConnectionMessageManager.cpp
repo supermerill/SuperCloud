@@ -403,7 +403,7 @@ namespace supercloud{
         if (need_new_id || (clusterManager->getIdentityManager().getComputerIdState() == IdentityManager::ComputerIdState::TEMPORARY && has_confict)) {
             //choose a random one and set our to "TEMPORARY"
 
-            ComputerId choosenId = ComputerId(rand_u63());
+            ComputerId choosenId = ComputerId(rand_u63()) & COMPUTER_ID_MASK;
             // while it's already taken
             const size_t MAX_ITERATION = 1000;
             size_t iteration = 0;
@@ -411,7 +411,7 @@ namespace supercloud{
             while ( (choosenId == 0 || choosenId == NO_COMPUTER_ID || std::find(registered_computer_id.begin(), registered_computer_id.end(), choosenId) != registered_computer_id.end())
                 && iteration < MAX_ITERATION) {
                 log(std::to_string(clusterManager->getPeerId() % 100) + " ClusterId " + choosenId + " is already taken, i will choose a new one\n");
-                choosenId = ComputerId(rand_u63());
+                choosenId = ComputerId(rand_u63()) & COMPUTER_ID_MASK;
                 iteration++;
             }
             //if still not good
