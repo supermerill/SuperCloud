@@ -154,12 +154,20 @@ ByteBuff& ByteBuff::put(ByteBuff& src)
 
 ByteBuff& ByteBuff::put(ByteBuff& src, size_t size)
 {
-    readcheck(size);
+    src.readcheck(size);
     expand(size);
     std::copy(src.m_buffer.get() + src.m_position, src.m_buffer.get() + src.m_position + size, this->m_buffer.get() + this->m_position);
     //System.arraycopy(src.m_buffer, src.m_position, this->m_buffer, this->m_position, size);
     this->m_position += size;
     src.m_position += size;
+    return *this;
+}
+ByteBuff& ByteBuff::get(ByteBuff& dest, size_t size) {
+    readcheck(size);
+    dest.expand(size);
+    std::copy(m_buffer.get() + m_position, m_buffer.get() + m_position + size, dest.m_buffer.get() + dest.m_position);
+    dest.m_position += size;
+    this->m_position += size;
     return *this;
 }
 
@@ -177,6 +185,11 @@ ByteBuff& ByteBuff::put(const uint8_t* src, const size_t srcPos, const size_t le
  * @return The raw array.
  */
 uint8_t* ByteBuff::raw_array()
+{
+    return this->m_buffer.get();
+}
+
+const uint8_t* ByteBuff::raw_array() const
 {
     return this->m_buffer.get();
 }
@@ -547,6 +560,12 @@ std::string ByteBuff::getShortUTF8()
 //    retVal.m_limit = Math.min(this.limit, start + length);
 //    return retVal;
 //}
+ByteBuff ByteBuff::subBuff(const size_t start, const size_t length) {
+    assert(start + length < limit());
+    ByteBuff retVal(length);
+    std::copy(this->m_buffer.get() + start, this->m_buffer.get() + start + length, retVal.m_buffer.get());
+    return retVal;
+}
 
 /**
  * Clear it. pos and limit are now at 0.

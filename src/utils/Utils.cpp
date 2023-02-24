@@ -194,6 +194,22 @@ namespace supercloud{
 
 	///END RANDOM=========================
 
+	//naive hash impl, to replace with something better?
+	uint64_t compute_naive_hash(uint8_t* buffer, size_t size) {
+		uint64_t hash = 0;
+		uint64_t* arr = (uint64_t*)(buffer);
+		const size_t max_iter = size / 8;
+		for (size_t i = 0; i < max_iter; ++i) {
+			hash ^= arr[i];
+		}
+		//last bits
+		for (size_t idx_buffer = max_iter*8; idx_buffer < size; ++idx_buffer) {
+			hash ^= buffer[idx_buffer];
+		}
+
+		return hash;
+	}
+
 	//inline void  compareDirect(const std::string& fileName, int min, int max) {
 
 	//	//File fic1 = new File("C:/Users/Admin/Videos/" + fileName);

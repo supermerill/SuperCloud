@@ -12,7 +12,7 @@ namespace supercloud {
         void replaceChunk(FsID old_chunk_id, FsID new_chunk_id, DateTime time) {
             bool found = false;
             {
-                std::lock_guard lock{ m_modify_load_mutex };
+                //std::lock_guard lock{ m_modify_load_mutex };
                 auto it = std::find(this->m_current_state.begin(), this->m_current_state.end(), old_chunk_id);
                 if (it != this->m_current_state.end()) {
                     found = true;
@@ -24,16 +24,21 @@ namespace supercloud {
                 }
             }
         }
+
+        //cache, but useful one
+        size_t m_size;
 	public:
         FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) :FsObject(id, date, name, puga, parent) {}
 
-		virtual std::tuple<FsID, DateTime> getLastModification() override {
-			std::lock_guard lock{ m_modify_load_mutex };
+		virtual std::tuple<FsID, DateTime> getLastModification() const override {
+			//std::lock_guard lock{ m_modify_load_mutex };
             if (m_commits.empty()) {
                 return {m_id, this->m_creation_date};
             }
 			return { m_commits.back().id, m_commits.back().date };
 		}
+
+        size_t size() const { return m_size; }
 //
 //		/**
 //		 * Create a new chunk. It will not be added to the file content right now.
@@ -270,4 +275,11 @@ namespace supercloud {
 //		}
 
 	};
+
+    class FsFileStub : public FsFile {
+        FsFileStub(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) : FsFile(id, date, name, puga, parent) {}
+        virtual std::tuple<FsID, DateTime> getLastModification() { return {}; }
+        std::vector<Commit>& commits() { return m_commits; }
+        std::vector<FsID>& current() { return m_current_state; }
+    };
 }

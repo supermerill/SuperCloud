@@ -12,23 +12,41 @@ namespace supercloud {
 	/// </summary>
 	class FsChunk : public FsElt {
 	protected:
-		//my unique parent.
+		//my parents... maybe not necessary. Can be used as counter for destruction. The managment can be tedious?
 		std::vector<FsID> m_parents;
+		// a hash of the data, to check for integrity (xor each 64b of the data). xor the remaining bytes in the first byte.
+		const uint64_t m_hash;
+		bool m_is_local = false;
 	public:
-		FsChunk(FsID id, DateTime date) :FsElt(id, date) {}
+		FsChunk(FsID id, DateTime date, uint64_t hash) :FsElt(id, date), m_hash(hash) {}
+
+		/// <summary>
+		/// use the hash to see if the data we have are in sync with it.
+		/// This impl read the data in a buffer, so you may want to reimplement it if you have a better way to compute a hash, at least to avoid a copy.
+		/// </summary>
+		/// <returns></returns>
+		virtual bool checkIntegrity() {
+			ByteBuff buff;
+			this->read(buff, 0, size());
+			uint64_t hash = compute_naive_hash(buff.raw_array(), buff.limit());
+			return hash == m_hash;
+		}
+
+		uint64_t getHash() const { return m_hash; }
 
 		/// my parents (file ids)
 		std::vector<FsID> getParents() { return m_parents; }
+		// add/remove parent?
 
 		//data
 		/**
-		 * Read some bytes from this chunk.
+		 * Read some bytes from this chunk. The data is just put inside the buffer.
 		 * @param toAppend buffer where data are put (if the return value is true).
 		 * @param offset from where to read.
 		 * @param size size of things readed.
 		 * @return true if possible. false if offset and size put us out of bounds.
 		 */
-		virtual bool read(ByteBuff& toAppend, size_t offset, size_t size) = 0;
+		virtual bool read(ByteBuff& toAppend, size_t offset, size_t size) const = 0;
 
 		/**
 		 * Write some bytes to this chunk.
@@ -46,32 +64,33 @@ namespace supercloud {
 		 * Get the size of the chunk content. It can be >0 even if it's not stored locally.
 		 * @return size in bytes.
 		 */
-		virtual size_t currentSize() = 0;
-		//virtual void setCurrentSize(size_t newSize) = 0;
-		/**
-		 * Get the max size this chunk can grow. It's almost not used.
-		 * @return the max size attribute
-		 */
-		//virtual size_t getMaxSize() = 0;
-		//virtual void setMaxSize(size_t newMaxSize) = 0;
+		virtual size_t size() const = 0;
 		/**
 		 * Ask if the chunk is stored locally or not.
 		 * @return true if it can be grab from the local storage.
 		 */
-		virtual bool isLocal() = 0;
+		virtual bool isLocal() { return m_is_local; }
 		/**
 		 * Set if the chunk is present localay or not. Used to remove it from the local storage.
 		 * @param isPresentLocally if false, delete the local storage of this chunk
 		 */
-		virtual void setLocal(bool isPresentLocally) = 0;
+		//virtual void setLocal(bool is_present_locally) { m_is_local = is_present_locally; }
 
 		/**
 		 *
 		 * @return in ms
 		 */
-		virtual long getLastAccessDate() = 0;
+		virtual DateTime getLastAccessDate() = 0;
 
 
+	};
+
+	class FsChunkStub : public FsChunk {
+		FsChunkStub(FsID id, DateTime date, uint64_t hash) : FsChunk(id, date, hash) { m_is_local = false; }
+
+		virtual bool read(ByteBuff& toAppend, size_t offset, size_t size) const override {};
+		virtual size_t size() { return 0; }
+		virtual DateTime getLastAccessDate() { return getDate(); }
 	};
 
 }

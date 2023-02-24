@@ -135,8 +135,9 @@ namespace supercloud {
 		 * @param length nb uint8_ts to copy
 		 * @return *this
 		 */
-		ByteBuff& get(uint8_t* dest, const size_t destPos, const size_t length);
 		ByteBuff& put(const uint8_t* src, size_t length);
+		ByteBuff& put(const uint8_t* src, const size_t srcPos, const size_t length);
+		ByteBuff& get(uint8_t* dest, const size_t destPos, const size_t length);
 
 		/**
 		 * Copy the scr.limit-src.position uint8_ts from src.position to src.limit into this.position.
@@ -145,7 +146,7 @@ namespace supercloud {
 		 */
 		ByteBuff& put(ByteBuff& src);
 		ByteBuff& put(ByteBuff& src, size_t size);
-		ByteBuff& put(const uint8_t* src, const size_t srcPos, const size_t length);
+		ByteBuff& get(ByteBuff& dest, size_t size);
 
 		/**
 		 * Getter to the raw array sed to store data between 0 and limit.
@@ -153,6 +154,7 @@ namespace supercloud {
 		 * @return The raw array.
 		 */
 		uint8_t* raw_array();
+		const uint8_t* raw_array() const;
 
 		//wchar getWChar();
 		//ByteBuff& putWChar(const wchar value);
@@ -194,16 +196,16 @@ namespace supercloud {
 		std::string getShortUTF8();
 
 		/**
-		 * Create a uint8_tBuff with other position and limit but the same backing buffer. The new values will be <= current
-		 * limit. All changes make to the backing buffer are reported.
+		 * Create a uint8_tBuff with other position and limit. The new values will be <= current
+		 * limit.
 		 *
 		 * @param start
 		 *            buffer start position
 		 * @param length
 		 *            Set the new limit to position + length
-		 * @return A ByteBuff with same buffer but another position and limit.
+		 * @return A ByteBuff with its own buffer and another position and limit.
 		 */
-		ByteBuff& subBuff(const size_t start, const size_t length);
+		ByteBuff subBuff(const size_t start, const size_t length);
 
 		/**
 		 * Clear it. pos and limit are now at 0.

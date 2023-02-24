@@ -58,6 +58,7 @@ namespace supercloud {
         // get the fail/success result from the connections we launched, and update our database
         // (mostly update 'success_from' and 'firs hand information' if success).
         void updateConnectionResults();
+        void register_listener();
     public:
 
         //factory
@@ -71,7 +72,6 @@ namespace supercloud {
             return shared_from_this();
         }
 
-        void register_listener();
 
         void receiveMessage(PeerPtr peer, uint8_t messageId, ByteBuff message) override;
 

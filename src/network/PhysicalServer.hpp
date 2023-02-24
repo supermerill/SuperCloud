@@ -74,6 +74,9 @@ namespace supercloud {
         // for update() method
         int64_t m_last_minute_update = 0;
 
+        //TODO: use the network ping message to synch it.
+        DateTime m_network_time_offset = 0;
+
         /**
          * Init a connection with an other (hypothetical) peer.
          * @param peer peer to try to connect
@@ -97,6 +100,9 @@ namespace supercloud {
         std::shared_ptr<PhysicalServer> ptr() {
             return shared_from_this();
         }
+
+        //TODO: use the network ping message to synch it.
+        virtual DateTime getCurrentTime() override { return m_network_time_offset + get_current_time_milis(); }
 
         /// <summary>
         /// launch a thread that update() each seconds.

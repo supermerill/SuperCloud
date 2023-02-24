@@ -136,6 +136,9 @@ namespace supercloud {
 		/// The peer's database of its peers
 		/// </summary>
 		SEND_SERVER_DATABASE,
+		//TODO
+		//GET_MAX_FLOW,
+		//SEND_MAX_FLOW,
 	};
 	constexpr auto operator*(UnnencryptedMessageType emt) noexcept{return static_cast<uint8_t>(emt);}
 
@@ -211,6 +214,12 @@ namespace supercloud {
 	public:
 		const ServerConnectionState& getState();
 
+		/// <summary>
+		/// Get the current UTC time, as defined by the network.
+		/// the precision of DateTime is at ms scale, but the network doesn't enforce a datetime synhronization below the second.
+		/// In practice, sub-second synch doesn't matter.
+		/// </summary>
+		virtual DateTime getCurrentTime() = 0;
 
 		//used
 		/**

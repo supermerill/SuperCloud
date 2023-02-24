@@ -342,7 +342,7 @@ namespace supercloud{
 			assert(false);
 		}
 		assert(m_peer_2_peerdata.find(new_peer) != m_peer_2_peerdata.end());
-		assert(m_peer_2_peerdata[new_peer].peer = new_peer);
+		assert(m_peer_2_peerdata[new_peer].peer == new_peer);
 		return new_peer;
 	}
 

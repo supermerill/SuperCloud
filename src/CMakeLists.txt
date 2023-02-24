@@ -30,16 +30,40 @@ add_library(libsupercloud STATIC
     utils/Utils.hpp
     utils/Parameters.cpp
     utils/Parameters.hpp
+	fs/base/FsElt.cpp
 	fs/base/FsElt.hpp
 	fs/base/FsObject.hpp
 	fs/base/FsChunk.hpp
 	fs/base/FsFile.hpp
 	fs/base/FsDirectory.hpp
+	fs/base/FsStorage.cpp
 	fs/base/FsStorage.hpp
+	fs/inmemory/FsDirInMemory.hpp
+	fs/inmemory/FsDirInMemory.cpp
+	fs/inmemory/FsFileInMemory.hpp
+	fs/inmemory/FsFileInMemory.cpp
 	fs/inmemory/FsChunkInMemory.hpp
 	fs/inmemory/FsChunkInMemory.cpp
 	fs/inmemory/FsStorageInMemory.hpp
 	fs/inmemory/FsStorageInMemory.cpp
+	fs/local/FsDirLocal.hpp
+	fs/local/FsDirLocal.cpp
+	fs/local/FsFileLocal.hpp
+	fs/local/FsFileLocal.cpp
+	fs/local/FsChunkLocal.hpp
+	fs/local/FsChunkLocal.cpp
+	fs/local/FsStorageLocal.hpp
+	fs/local/FsStorageLocal.cpp
+	synch/AbstractFSMessageManager.hpp
+	synch/ExchangeChunk.hpp
+	synch/PropagateChange.cpp
+	synch/PropagateChange.hpp
+	synch/PropagateChangeAndGrabData.hpp
+	synch/RequestCheckForModification.hpp
+	synch/SynchroDb.cpp
+	synch/SynchroDb.hpp
+	os/FuseImpl.hpp
+	os/FuseInterface.hpp
 )
 
 #encoding_check(libsupercloud)

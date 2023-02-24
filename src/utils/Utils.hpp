@@ -47,7 +47,15 @@ namespace supercloud{
 
 	typedef std::string InetAdress;
 	typedef std::pair<InetAdress, uint16_t> InetSocketAddress;
-	typedef int64_t DateTime;
+	typedef int64_t DateTime;	// in miliseconds (+- 292 471 208 years from 1970)
+	typedef int32_t Date;		// in minutes (+-4 080 years from 1970)
+
+	Date toDate(DateTime time) {
+		return Date(time / 60000);
+	}
+	DateTime toDateTime(Date date) {
+		return DateTime(date) * 60000;
+	}
 
 	template<class NUMERIC>
 	std::string to_hex_str(NUMERIC data)
@@ -65,6 +73,7 @@ namespace supercloud{
 	uint16_t rand_u16();
 	uint8_t rand_u8();
 
+	uint64_t compute_naive_hash(uint8_t* buffer, size_t size);
 
 	//inline void  compareDirect(const std::string& fileName, int min, int max);
 
@@ -142,7 +151,7 @@ namespace supercloud{
 				return true;
 		return false;
 	}
-
+	//TODO: do full test 
 	namespace custom {
 		/// Little wrapper class over a vector to easier iteration on it when a erase is needed.
 		// it can go both direction with ++/next() and --/previous()
@@ -168,6 +177,7 @@ namespace supercloud{
 			it(std::vector<T>* v, int32_t p) : vec(v), pos(p) {}
 		public:
 			it(std::vector<T>& v) : vec(&v), pos(-1) {}
+			it(std::vector<T>& v, start_end) : vec(&v), pos(start_end ? v.size() : -1) {}
 
 			/// check if the current position of this iterator point to a valid value.
 			bool valid() { return pos >= 0 && pos < vec->size(); }
@@ -200,6 +210,20 @@ namespace supercloud{
 			it operator--(int) { --pos; return it{ vec, pos + 1 }; }
 			// erase the value at the curent position. Then go to the previous position.
 			void erase() { if (pos >= 0 && pos < vec->size()) { vec->erase(vec->begin() + pos); pos = std::max(-1, pos - 1); } }
+			T pop_next() {
+				assert(pos >= -1 && pos < vec->size() - 1);
+				//don't move, just read & erase
+				T temp = std::move((*vec)[pos+1]);
+				vec->erase(vec->begin() + pos + 1);
+				return temp;
+			}
+			T pop_previous() {
+				assert(pos > 0 && pos <= vec->size());
+				T temp = std::move((*vec)[--pos]);
+				//don't move pos again, as you want to still be in the 'end' position (if you only use pop_previous after go_end())
+				vec->erase(vec->begin() + pos);
+				return temp;
+			}
 
 		};
 

@@ -1,9 +1,8 @@
 #include "FsStorageInMemory.hpp"
 
 #include "FsChunkInMemory.hpp"
-#include "fs/base/FsStorage.hpp"
-#include "fs/base/FsFile.hpp"
-#include "fs/base/FsDirectory.hpp"
+#include "FsFileInMemory.hpp"
+#include "FsDirInMemory.hpp"
 #include "utils/Utils.hpp"
 
 #include <atomic>
@@ -17,8 +16,6 @@ namespace supercloud {
         m_loaded_parent = parent;
     }
 
-    FsFileInMemory::FsFileInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent)
-        : FsFile(id, date, name, puga, parent) {}
     FsEltPtr FsSerializableInMemory::deserialize(ByteBuff& buffer) {
         FsID id = buffer.getULong();
         if (FsElt::isChunk(id)) {
@@ -31,6 +28,7 @@ namespace supercloud {
             throw std::exception("errro, unknown id");
         }
     }
+
     void FsSerializableInMemory::serialize(FsEltPtr obj, ByteBuff& buffer) {
         FsID id = obj->getId();
         if (FsElt::isChunk(id)) {
@@ -40,213 +38,8 @@ namespace supercloud {
         } else if (FsElt::isDirectory(id)) {
             FsDirectoryInMemory::serialize((FsDirectoryInMemory*)obj.get(), buffer);
         } else {
-            throw std::exception("errro, unknown id");
+            throw std::exception("error, unknown id");
         }
-    }
-
-    void FsFileInMemory::serialize(FsFileInMemory* thi, ByteBuff& buffer) {
-        std::cout << "File id=" << thi->getId() << "@" << buffer.position() << "\n";
-        buffer.putLong(thi->m_creation_date);
-        buffer.putUTF8(thi->m_name);
-        buffer.putShort(thi->m_puga);
-        buffer.putULong(thi->m_parent);
-        buffer.putLong(thi->m_date_deleted);
-        buffer.putULong(thi->m_renamed_to);
-        buffer.putSize(thi->m_current_state.size());
-        for (FsID id : thi->m_current_state) {
-            buffer.putULong(id);
-        }
-        buffer.putSize(thi->m_commits.size());
-        std::cout << "m_commits=" << thi->m_commits.size() << "@" << buffer.position() << "\n";
-        if (thi->m_commits.size() == 1) {
-            buffer.putULong(thi->m_commits.front().id);
-            buffer.putLong(thi->m_commits.front().date);
-        } else {
-            for (Commit& commit : thi->m_commits) {
-                buffer.putULong(commit.id);
-                buffer.putLong(commit.date);
-                buffer.putSize(commit.changes.size());
-                for (auto& del2add : commit.changes) {
-                    buffer.putSize(del2add.first);
-                    buffer.putSize(del2add.second);
-                }
-            }
-        }
-    }
-
-    std::shared_ptr<FsFileInMemory> FsFileInMemory::deserialize(FsID id, ByteBuff& buffer) {
-        std::cout << "File id=" << id << "@" << buffer.position() << "\n";
-        DateTime creation_date = buffer.getLong();
-        std::string name = buffer.getUTF8();
-        CUGA puga = buffer.getShort();
-        FsID parent = buffer.getULong();
-        std::shared_ptr<FsFileInMemory> file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {id, creation_date, name, puga, parent} };
-        file->m_date_deleted = buffer.getLong();
-        file->m_renamed_to = buffer.getULong();
-        size_t current_state_size = buffer.getSize();
-        for (size_t i = 0; i < current_state_size; i++) {
-            file->m_current_state.push_back(buffer.getULong());
-        }
-        size_t commit_size = buffer.getSize();
-        std::cout << "m_commits=" << commit_size << "@" << buffer.position() << "\n";
-        if (commit_size == 1) {
-            file->m_commits.emplace_back();
-            file->m_commits.back().id = buffer.getULong();
-            file->m_commits.back().date = buffer.getLong();
-            for (FsID id : file->m_current_state) {
-                file->m_commits.back().changes.push_back({ 0, id });
-            }
-        } else {
-            for (size_t i = 0; i < commit_size; i++) {
-                file->m_commits.emplace_back();
-                file->m_commits.back().id = buffer.getULong();
-                file->m_commits.back().date = buffer.getLong();
-                size_t changes_size = buffer.getSize();
-                for (size_t ic = 0; ic < changes_size; ic++) {
-                    file->m_commits.back().changes.emplace_back();
-                    file->m_commits.back().changes.back().first = buffer.getSize();
-                    file->m_commits.back().changes.back().second = buffer.getSize();
-                }
-            }
-        }
-        return file;
-    }
-
-    void FsFileInMemory::addChunk(std::shared_ptr<FsChunkInMemory> new_chunk) {
-        FsObject::addThing(new_chunk->getId(), new_chunk->getDate());
-    }
-
-    void FsFileInMemory::replaceChunk(FsChunkPtr old, std::shared_ptr<FsChunkInMemory> new_chunk) {
-        FsFile::replaceChunk(old->getId(), new_chunk->getId(), new_chunk->getDate());
-    }
-
-    void FsFileInMemory::replaceContent(const std::vector<FsID>& new_content, std::vector<std::pair<FsID, FsID>> commit, FsID commit_id, DateTime commit_time) {
-        FsObject::replaceContent(new_content, commit, commit_id, commit_time);
-    }
-
-    void FsFileInMemory::remove(DateTime time, FsID renamed_to) {
-        m_date_deleted = time;
-        m_renamed_to = renamed_to;
-    }
-
-    FsDirectoryInMemory::FsDirectoryInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent)
-        :FsDirectory(id, date, name, puga, parent) {}
-    void FsDirectoryInMemory::notifyModificationChained(FsID last_commit_id, DateTime date) {
-        FsDirectory::notifyModification(last_commit_id, date);
-        assert(m_loaded_parent || m_parent == m_id);
-        if (m_loaded_parent && m_parent != m_id && m_loaded_parent.get() != this)
-            m_loaded_parent->notifyModificationChained(last_commit_id, date);
-    }
-
-    void FsDirectoryInMemory::addFile(std::shared_ptr<FsFileInMemory> file) {
-        FsObject::addThing(file->getId(), file->getDate());
-    }
-
-    void FsDirectoryInMemory::addDir(std::shared_ptr<FsDirectoryInMemory> file) {
-        FsObject::addThing(file->getId(), file->getDate());
-    }
-
-    void FsDirectoryInMemory::setFiles(std::vector<FsID> new_items, FsID commit_id, DateTime commit_time) {
-        std::vector<std::pair<FsID, FsID>> commit;
-        for (FsID id : new_items) {
-            commit.push_back({ 0, id });
-        }
-        FsObject::replaceContent(new_items, commit, commit_id, commit_time);
-    }
-
-    void FsDirectoryInMemory::delFile(FsID to_del, FsID commit_id, DateTime commit_time) {
-        bool found = false;
-        {
-            std::lock_guard lock{ m_modify_load_mutex };
-            auto it = std::find(this->m_current_state.begin(), this->m_current_state.end(), to_del);
-            if (it != this->m_current_state.end()) {
-                found = true;
-                this->m_commits.emplace_back();
-                this->m_commits.back().id = commit_id;
-                this->m_commits.back().date = commit_time;
-                this->m_commits.back().changes.push_back({ to_del, 0 });
-                this->m_current_state.erase(it);
-            }
-        }
-    }
-
-    void FsDirectoryInMemory::remove(DateTime time, FsID renamed_to) {
-        m_date_deleted = time;
-        m_renamed_to = renamed_to;
-    }
-
-    void FsDirectoryInMemory::serialize(FsDirectoryInMemory* thi, ByteBuff& buffer) {
-        std::cout << "Dir id=" << thi->getId() << "@" << buffer.position() << "\n";
-        buffer.putLong(thi->m_creation_date);
-        buffer.putUTF8(thi->m_name);
-        buffer.putShort(thi->m_puga);
-        buffer.putULong(thi->m_parent);
-        buffer.putLong(thi->m_last_modification_date);
-        buffer.putULong(thi->m_last_modification_commit_id);
-        buffer.putLong(thi->m_date_deleted);
-        buffer.putULong(thi->m_renamed_to);
-        buffer.putSize(thi->m_current_state.size());
-        for (FsID id : thi->m_current_state) {
-            buffer.putULong(id);
-        }
-        buffer.putSize(thi->m_commits.size());
-        std::cout << "m_commits=" << thi->m_commits.size() << "@" << buffer.position() << "\n";
-        if (thi->m_commits.size() == 1) {
-            buffer.putULong(thi->m_commits.front().id);
-            buffer.putLong(thi->m_commits.front().date);
-        } else {
-            for (Commit& commit : thi->m_commits) {
-                buffer.putULong(commit.id);
-                buffer.putLong(commit.date);
-                buffer.putSize(commit.changes.size());
-                for (auto& del2add : commit.changes) {
-                    buffer.putSize(del2add.first);
-                    buffer.putSize(del2add.second);
-                }
-            }
-
-        }
-    }
-
-    std::shared_ptr<FsDirectoryInMemory> FsDirectoryInMemory::deserialize(FsID id, ByteBuff& buffer) {
-        std::cout << "Dir id=" << id << "@" << buffer.position() << "\n";
-        DateTime creation_date = buffer.getLong();
-        std::string name = buffer.getUTF8();
-        CUGA puga = buffer.getShort();
-        FsID parent = buffer.getULong();
-        std::shared_ptr<FsDirectoryInMemory> file = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {id, creation_date, name, puga, parent} };
-        file->m_last_modification_date = buffer.getLong();
-        file->m_last_modification_commit_id = buffer.getULong();
-        file->m_date_deleted = buffer.getLong();
-        file->m_renamed_to = buffer.getULong();
-        size_t current_state_size = buffer.getSize();
-        for (size_t i = 0; i < current_state_size; i++) {
-            file->m_current_state.push_back(buffer.getULong());
-        }
-        size_t commit_size = buffer.getSize();
-        std::cout << "m_commits=" << commit_size << "@" << buffer.position() << "\n";
-        if (commit_size == 1) {
-            file->m_commits.emplace_back();
-            file->m_commits.back().id = buffer.getULong();
-            file->m_commits.back().date = buffer.getLong();
-            for (FsID id : file->m_current_state) {
-                file->m_commits.back().changes.push_back({ 0, id });
-            }
-        } else {
-            for (size_t i = 0; i < current_state_size; i++) {
-                file->m_commits.emplace_back();
-                file->m_commits.back().id = buffer.getULong();
-                file->m_commits.back().date = buffer.getLong();
-                size_t changes_size = buffer.getSize();
-                for (size_t ic = 0; ic < changes_size; ic++) {
-                    file->m_commits.back().changes.emplace_back();
-                    file->m_commits.back().changes.back().first = buffer.getSize();
-                    file->m_commits.back().changes.back().second = buffer.getSize();
-                }
-            }
-
-        }
-        return file;
     }
 
     FsID FsStorageInMemory::getNextId() {
@@ -254,12 +47,12 @@ namespace supercloud {
     }
 
     bool FsStorageInMemory::hasLocally(FsID id) { 
-        return database.find(id) != database.end();
+        return m_database.find(id) != m_database.end();
     }
 
     FsEltPtr FsStorageInMemory::load(FsID id) {
-        auto it = database.find(id);
-        if (it != database.end())
+        auto it = m_database.find(id);
+        if (it != m_database.end())
             return it->second;
         return {};
     }
@@ -275,96 +68,115 @@ namespace supercloud {
     }
 
     FsChunkPtr FsStorageInMemory::addChunkToFile(FsFilePtr file, ByteBuff data) {
+        std::lock_guard lock{ this->synchronize() };
         FsID new_id = FsElt::setChunk(getNextId());
         //create new chunk
-        std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ new FsChunkInMemory {new_id, get_current_time_milis(), data, data.available()} };
-        database[new_chunk->getId()] = new_chunk;
-        ((FsFileInMemory*)file.get())->addChunk(new_chunk);
-        ((FsFileInMemory*)file.get())->m_loaded_parent->notifyModificationChained(new_chunk->getId(), new_chunk->getDate());
+        std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{
+            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), data.rewind(), FsChunk::getHash(data.rewind()), data.available()} };
+        m_database[new_chunk->getId()] = new_chunk;
+        static_cast<FsFileInMemory*>(file.get())->addChunk(new_chunk);
+        static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(new_chunk->getId(), new_chunk->getDate());
+        new_chunk->addParent(file->getId());
         return new_chunk;
     }
 
     FsChunkPtr FsStorageInMemory::modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, ByteBuff new_data) {
+        std::lock_guard lock{ this->synchronize() };
         FsID new_id = FsElt::setChunk(getNextId());
         //create new chunk
-        std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ new FsChunkInMemory {new_id, get_current_time_milis(), new_data, new_data.available()} };
-        database[new_chunk->getId()] = new_chunk;
-        ((FsFileInMemory*)file.get())->replaceChunk(old_chunk, new_chunk);
-        ((FsFileInMemory*)file.get())->m_loaded_parent->notifyModificationChained(new_chunk->getId(), new_chunk->getDate());
+        std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
+            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), new_data.rewind(), FsChunk::getHash(new_data.rewind()), new_data.available()} };
+        m_database[new_chunk->getId()] = new_chunk;
+        static_cast<FsFileInMemory*>(file.get())->replaceChunk(old_chunk, new_chunk);
+        static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(new_chunk->getId(), new_chunk->getDate());
+        new_chunk->addParent(file->getId());
         return new_chunk;
     }
 
     void FsStorageInMemory::modifyFile(FsFilePtr file, std::vector<ChunkOrRawData> new_chunks) {
+        std::lock_guard lock{ this->synchronize() };
         //note: the shuffle of chunks isn't detected, but it's something that can't happen.
         //  Files are modified completly, or at the end.
         // It something is added at the start, or in the middle, then "evrything modified" is detected. I'm not git.
         std::vector<FsID> old_chunks = file->getCurrent();
-        FsID commit_id = 0;
-        DateTime commit_time = get_current_time_milis();
         //create the updating request
         std::vector<FsID> new_file_content;
-        std::vector<std::pair<FsID, FsID>> commit;
+        FsObject::Commit commit;
+        commit.date = m_clock->getCurrrentTime();
         size_t min_size = std::min(new_chunks.size(), old_chunks.size());
         size_t idx = 0;
+        size_t file_size = 0;
         for (; idx < min_size; idx++) {
             if (new_chunks[idx].chunk) {
                 if (old_chunks[idx] != new_chunks[idx].chunk->getId()) {
-                    commit.push_back({ old_chunks[idx], new_chunks[idx].chunk->getId() });
+                    commit.changes.push_back({ old_chunks[idx], new_chunks[idx].chunk->getId() });
                 }
                 new_file_content.push_back(new_chunks[idx].chunk->getId());
+                ((FsChunkInMemory*)new_chunks[idx].chunk.get())->addParent(file->getId());
+                file_size += new_chunks[idx].chunk->size();
             } else {
                 FsID new_id = FsElt::setChunk(getNextId());
-                std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ new FsChunkInMemory {new_id, commit_time, *new_chunks[idx].raw_data, new_chunks[idx].raw_data->available()} };
-                if (commit_id == 0) { commit_id = new_id; }
-                database[new_id] = new_chunk;
-                commit.push_back({ old_chunks[idx], new_id });
+                std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
+                    new FsChunkInMemory {new_id, commit.date, new_chunks[idx].raw_data->rewind(), FsChunk::getHash(new_chunks[idx].raw_data->rewind()), new_chunks[idx].raw_data->available()} };
+                if (commit.id == 0) { commit.id = new_id; }
+                m_database[new_id] = new_chunk;
+                commit.changes.push_back({ old_chunks[idx], new_id });
                 new_file_content.push_back(new_id);
+                new_chunk->addParent(file->getId());
+                file_size += new_chunk->size();
             }
         }
         for (; idx < old_chunks.size(); idx++) {
-            commit.push_back({ old_chunks[idx], 0 });
+            commit.changes.push_back({ old_chunks[idx], 0 });
         }
         for (; idx < new_chunks.size(); idx++) {
             if (new_chunks[idx].chunk) {
-                commit.push_back({ 0, new_chunks[idx].chunk->getId() });
+                commit.changes.push_back({ 0, new_chunks[idx].chunk->getId() });
                 new_file_content.push_back(new_chunks[idx].chunk->getId());
+                ((FsChunkInMemory*)new_chunks[idx].chunk.get())->addParent(file->getId());
+                file_size += new_chunks[idx].chunk->size();
             } else {
                 FsID new_id = FsElt::setChunk(getNextId());
-                std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ new FsChunkInMemory {new_id, commit_time, *new_chunks[idx].raw_data, new_chunks[idx].raw_data->available()} };
-                if (commit_id == 0) { commit_id = new_id; }
-                database[new_id] = new_chunk;
-                commit.push_back({ 0, new_id });
+                std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
+                    new FsChunkInMemory {new_id, commit.date, new_chunks[idx].raw_data->rewind(), FsChunk::getHash(new_chunks[idx].raw_data->rewind()), new_chunks[idx].raw_data->available()} };
+                if (commit.id == 0) { commit.id = new_id; }
+                m_database[new_id] = new_chunk;
+                commit.changes.push_back({ 0, new_id });
                 new_file_content.push_back(new_id);
+                new_chunk->addParent(file->getId());
+                file_size += new_chunk->size();
             }
         }
-        if (commit_id == 0) { commit_id = FsElt::setNone(getNextId()); }
-        ((FsFileInMemory*)file.get())->replaceContent(new_file_content, commit, commit_id, commit_time);
-        assert(((FsFileInMemory*)file.get())->m_loaded_parent);
-        ((FsFileInMemory*)file.get())->m_loaded_parent->notifyModificationChained(commit_id, commit_time);
+        if (commit.id == 0) { commit.id = FsElt::setNone(getNextId()); }
+        static_cast<FsFileInMemory*>(file.get())->replaceContent(new_file_content, commit, file_size);
+        assert(static_cast<FsFileInMemory*>(file.get())->m_loaded_parent);
+        static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(commit.id, commit.date);
     }
 
     FsFilePtr FsStorageInMemory::createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks, CUGA rights) {
+        std::lock_guard lock{ this->synchronize() };
         FsID new_id = FsElt::setFile(getNextId());
-        DateTime time = (DateTime)get_current_time_milis();
+        DateTime time = (DateTime)m_clock->getCurrrentTime();
         std::shared_ptr<FsFileInMemory> new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId()} };
         new_file->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(directory));
         modifyFile(new_file, chunks);
-        database[new_file->getId()] = new_file;
+        m_database[new_file->getId()] = new_file;
         ((FsDirectoryInMemory*)directory.get())->addFile(new_file);
         ((FsDirectoryInMemory*)directory.get())->notifyModificationChained(new_file->getId(), time);
         return new_file;
     }
 
     FsFilePtr FsStorageInMemory::modifyFile(FsFilePtr old_file, const std::string& name, std::vector<ChunkOrRawData> chunks, CUGA rights) {
+        std::lock_guard lock{ this->synchronize() };
         FsEltPtr directory_elt = load(old_file->getParent());
         if (FsDirPtr directory = FsElt::toDirectory(directory_elt); directory) {
             FsID new_id = FsElt::setFile(getNextId());
-            DateTime time = (DateTime)get_current_time_milis();
+            DateTime time = (DateTime)m_clock->getCurrrentTime();
             std::shared_ptr<FsFileInMemory> new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId()} };
             if (!chunks.empty()) {
                 modifyFile(new_file, chunks);
             }
-            database[new_file->getId()] = new_file;
+            m_database[new_file->getId()] = new_file;
             new_file->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(directory));
             ((FsObjectInMemory*)old_file.get())->remove(time, new_file->getId());
             ((FsDirectoryInMemory*)directory.get())->addFile(new_file);
@@ -376,8 +188,9 @@ namespace supercloud {
     }
 
     FsDirPtr FsStorageInMemory::createNewDirectory(FsDirPtr directory_parent, const std::string& name, std::vector<FsObjectPtr> data, CUGA rights) {
+        std::lock_guard lock{ this->synchronize() };
         FsID new_id = FsElt::setDirectory(getNextId());
-        DateTime time = (DateTime)get_current_time_milis();
+        DateTime time = (DateTime)m_clock->getCurrrentTime();
         std::shared_ptr<FsDirectoryInMemory> new_dir = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {new_id, time, name, rights, directory_parent ? directory_parent->getId() : new_id} };
         if (!data.empty()) {
             std::vector<FsID> vect;
@@ -386,7 +199,7 @@ namespace supercloud {
             }
             new_dir->setFiles(vect, new_dir->getId(), time);
         }
-        database[new_dir->getId()] = new_dir;
+        m_database[new_dir->getId()] = new_dir;
         new_dir->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(directory_parent));
         if (directory_parent) {
             ((FsDirectoryInMemory*)directory_parent.get())->addDir(new_dir);
@@ -396,11 +209,12 @@ namespace supercloud {
     }
 
     void FsStorageInMemory::deleteObject(FsObjectPtr old_file) {
+        std::lock_guard lock{ this->synchronize() };
         FsEltPtr directory_elt = load(old_file->getParent());
         if (FsDirPtr directory = FsElt::toDirectory(directory_elt); directory) {
             assert(directory != old_file);
             FsID new_id = FsElt::setFile(getNextId());
-            DateTime time = (DateTime)get_current_time_milis();
+            DateTime time = (DateTime)m_clock->getCurrrentTime();
             ((FsObjectInMemory*)old_file.get())->remove(time, 0);
             ((FsDirectoryInMemory*)directory.get())->delFile(old_file->getId(), new_id, time);
             ((FsDirectoryInMemory*)directory.get())->notifyModificationChained(new_id, time);
@@ -409,14 +223,15 @@ namespace supercloud {
         assert(false);
     }
 
-    void FsStorageInMemory::save_all(const std::filesystem::path& file) {
+    void FsStorageInMemory::serialize(const std::filesystem::path& file) {
+        std::lock_guard lock{ this->synchronize() };
 
         ByteBuff buffer;
         buffer.putInt(this->m_cid);
         buffer.putULong(this->m_root_id);
         buffer.putULong(this->m_id_generator.load());
-        buffer.putSize(database.size());
-        for (auto& id_2_elt : database) {
+        buffer.putSize(m_database.size());
+        for (auto& id_2_elt : m_database) {
             buffer.putULong(id_2_elt.first);
             FsSerializableInMemory::serialize(id_2_elt.second, buffer);
         }
@@ -426,7 +241,8 @@ namespace supercloud {
         myfile.close();
     }
 
-    void FsStorageInMemory::load_all(const std::filesystem::path& file) {
+    void FsStorageInMemory::deserialize(const std::filesystem::path& file) {
+        std::lock_guard lock{ this->synchronize() };
         std::ifstream infile(file, std::ios_base::binary);
         std::vector<char> vector_buffer{ std::istreambuf_iterator<char>(infile), std::istreambuf_iterator<char>() };
         infile.close();
@@ -438,22 +254,26 @@ namespace supercloud {
         const size_t nb_elts = buffer.getSize();
         for (size_t idx = 0; idx < nb_elts; ++idx) {
             FsEltPtr elt = FsSerializableInMemory::deserialize(buffer);
-            database[elt->getId()] = elt;
+            m_database[elt->getId()] = elt;
         }
         //set loaded_parent property
-        for (auto& it : database) {
+        for (auto& it : m_database) {
             if (auto chunk = FsElt::toChunk(it.second); chunk) {
 
             } else if (auto file = FsElt::toFile(it.second); chunk) {
-                ((FsFileInMemory*)file.get())->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(database[file->getParent()]));
+                FsEltPtr parent = m_database[file->getParent()];
+                FsElt* eltp = parent.get();
+                FsDirectoryInMemory* dirp = static_cast<FsDirectoryInMemory*>(eltp);
+                static_cast<FsFileInMemory*>(file.get())->set_loaded_parent(std::static_pointer_cast<FsDirectoryInMemory>(parent));
             } else if (auto dir = FsElt::toDirectory(it.second); chunk) {
-                ((FsDirectoryInMemory*)dir.get())->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(database[file->getParent()]));
+                static_cast<FsDirectoryInMemory*>(dir.get())->set_loaded_parent(std::static_pointer_cast<FsDirectoryInMemory>(m_database[file->getParent()]));
             }
         }
 
     }
 
     std::vector<FsDirPtr> FsStorageInMemory::getDirs(FsDirPtr dir) {
+        std::lock_guard lock{ this->synchronize() };
         std::vector<FsDirPtr> childs;
         for (FsID child : dir->getCurrent()) {
             if (FsElt::isDirectory(child)) {
@@ -464,6 +284,7 @@ namespace supercloud {
     }
 
     std::vector<FsFilePtr> FsStorageInMemory::getFiles(FsDirPtr dir) {
+        std::lock_guard lock{ this->synchronize() };
         std::vector<FsFilePtr> childs;
         for (FsID child : dir->getCurrent()) {
             if (FsElt::isFile(child)) {
@@ -473,4 +294,173 @@ namespace supercloud {
         return childs;
     }
 
+    size_t FsStorageInMemory::createNewMergeCommit(FsID file_id, FsObject::Commit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks) {
+        std::lock_guard lock{ this->synchronize() };
+        size_t new_file_size = 0;
+        size_t min_size = std::min(new_chunks.size(), old_chunks.size());
+        size_t idx = 0;
+        for (; idx < min_size; idx++) {
+            if (old_chunks[idx] != new_chunks[idx]) {
+                commit.changes.push_back({ old_chunks[idx], new_chunks[idx] });
+                if (FsChunkPtr chunk = loadChunk(new_chunks[idx]); chunk) {
+                    static_cast<FsChunkInMemory*>(chunk.get())->addParent(file_id);
+                    new_file_size += chunk->size();
+                } else {
+                    //create distant one
+                    std::shared_ptr<FsChunkInMemory> new_stub_chunk = std::shared_ptr<FsChunkInMemory>{
+                        new FsChunkInMemory{new_chunks[idx], 0, 0, 0} };
+                    new_stub_chunk->addParent(file_id);
+                    m_database[new_chunks[idx]] = new_stub_chunk;
+                    new_file_size += new_stub_chunk->size(); //FIXME?
+                }
+            }
+        }
+        for (; idx < old_chunks.size(); idx++) {
+            commit.changes.push_back({ old_chunks[idx], 0 });
+        }
+        for (; idx < new_chunks.size(); idx++) {
+            commit.changes.push_back({ 0, new_chunks[idx] });
+            if (FsChunkPtr chunk = loadChunk(new_chunks[idx]); chunk) {
+                static_cast<FsChunkInMemory*>(chunk.get())->addParent(file_id);
+                new_file_size += chunk->size();
+            } else {
+                //create distant one
+                std::shared_ptr<FsChunkInMemory> new_stub_chunk = std::shared_ptr<FsChunkInMemory>{
+                    new FsChunkInMemory{new_chunks[idx], 0, 0, 0} };
+                new_stub_chunk->addParent(file_id);
+                m_database[new_chunks[idx]] = new_stub_chunk;
+                new_file_size += new_stub_chunk->size(); //FIXME?
+            }
+        }
+        return new_file_size;
+    }
+
+    bool FsStorageInMemory::mergeFileCommit(const FsObject& new_commit) {
+        std::lock_guard lock{ this->synchronize() };
+        assert(new_commit.getCommitsSize() >= 1);
+        const FsObject::Commit& last_new_commit = new_commit.backCommit();
+        std::vector<FsID> new_commit_state = new_commit.getCurrent();
+        //get our file
+        FsFilePtr goodfile = loadFile(new_commit.getId());
+        if (!goodfile) {
+            if (new_commit.getCurrent().empty()) {
+                //is deleted anyway... I don't care.
+                return;
+            }
+            //have to create it.
+            assert(new_commit.getDate() != 0);
+            assert(new_commit.getName() != "");
+            assert(new_commit.getParent() != 0);
+            
+            // hopefully, its parent exists.
+            FsDirPtr parent = loadDirectory(new_commit.getParent());
+
+            //.... i'll add it parent or no parent, so it's here for when i'll receive its parent.
+            std::shared_ptr<FsFileInMemory> new_file = std::shared_ptr< FsFileInMemory>(
+                new FsFileInMemory{ new_commit.getId(), new_commit.getDate(), new_commit.getName(), new_commit.getCUGA(), new_commit.getParent() });
+            //we only store the last commit. (because of laziness) Please create a BackupFs if you want to store evrything.
+            //create the creation commit
+            FsObject::Commit create_commit{ last_new_commit.id, last_new_commit.date, {} };
+            for (const FsID& id : new_commit_state) {
+                create_commit.changes.push_back({ 0,id });
+            }
+            //push it
+            new_file->replaceContent(new_commit_state, create_commit, 0); //FIXME 0 size
+
+            if (!parent) {
+                //NOTE: currently they are not sorted, so this isn't respected.
+                error("Error, try to insert a file that has no parent.");
+                //assert(false);
+            }
+        } else {
+            //ignore if we have a more recent commit.
+            if (goodfile->getCommitsSize() > 0 && goodfile->backCommit().date > last_new_commit.date) {
+                //more recent, ignore.
+                return false;
+            }
+            //deleted?
+            if (new_commit_state.empty()) {
+                if (FsDirPtr directory = loadDirectory(new_commit.getParent()); directory) {
+                    ((FsObjectInMemory*)goodfile.get())->remove(last_new_commit.date, new_commit.getRenamedTo());
+                    ((FsDirectoryInMemory*)directory.get())->delFile(goodfile->getId(), last_new_commit.id, last_new_commit.date);
+                    ((FsDirectoryInMemory*)directory.get())->notifyModificationChained(last_new_commit.id, last_new_commit.date);
+                    return;
+                } else {
+                    //error, no parent but the file exists!
+                    assert(false);
+                }
+            }else{
+                //get previous state for me and his
+                //create the modification commit
+                FsObject::Commit modif_commit{ last_new_commit.id, last_new_commit.date, {} };
+                //now create a commit to go from my 
+                size_t new_size = createNewMergeCommit(goodfile->getId(), modif_commit, goodfile->getCurrent(), new_commit_state);
+
+                //add commit
+                static_cast<FsFileInMemory*>(goodfile.get())->replaceContent(new_commit.getCurrent(), modif_commit, new_size);
+            }
+        }
+        return true;
+    }
+
+    bool FsStorageInMemory::mergeDirectoryCommit(const FsObject& new_commit) {
+        std::lock_guard lock{ this->synchronize() };
+        assert(new_commit.getCommitsSize() >= 1);
+        const FsObject::Commit& last_new_commit = new_commit.backCommit();
+        std::vector<FsID> new_commit_state = new_commit.getCurrent();
+        //get our file
+        FsDirPtr gooddir = loadDirectory(new_commit.getId());
+        if (!gooddir) {
+            if (new_commit_state.empty()) {
+                //is deleted anyway... I don't care. But this shouldn't happen...
+                assert(false);
+                return;
+            }
+            //have to create it... hopefully, its parent exists.
+            FsDirPtr parent = loadDirectory(new_commit.getParent());
+
+            //.... i'll add it parent or no praent, so it's here for when i'll receive its parent.
+            std::shared_ptr<FsDirectoryInMemory> new_dir = std::shared_ptr<FsDirectoryInMemory>(
+                new FsDirectoryInMemory{ new_commit.getId(), new_commit.getDate(), new_commit.getName(), new_commit.getCUGA(), new_commit.getParent() });
+            //we only store the last commit. (because of laziness) Please create a BackupFs if you want to store evrything.
+            //create the creation commit
+            FsObject::Commit create_commit{ last_new_commit.id, last_new_commit.date, {} };
+            for (const FsID& id : new_commit_state) {
+                create_commit.changes.push_back({ 0,id });
+            }
+            //push it
+            new_dir->replaceContent(new_commit_state, create_commit);
+
+            if (!parent) {
+                error("Error, try to insert a directory that has no parent.");
+                assert(false);
+            }
+        } else {
+            //ignore if we have a more recent commit.
+            if (gooddir->getCommitsSize() > 0 && gooddir->backCommit().date > last_new_commit.date) {
+                //more recent, ignore.
+                return false;
+            }
+            //deleted?
+            if (new_commit_state.empty()) {
+                if (FsDirPtr dir_parent = loadDirectory(new_commit.getParent()); dir_parent) {
+                    static_cast<FsDirectoryInMemory*>(gooddir.get())->remove(last_new_commit.date, new_commit.getRenamedTo());
+                    static_cast<FsDirectoryInMemory*>(dir_parent.get())->delFile(gooddir->getId(), last_new_commit.id, last_new_commit.date);
+                    static_cast<FsDirectoryInMemory*>(dir_parent.get())->notifyModificationChained(last_new_commit.id, last_new_commit.date);
+                    return;
+                } else {
+                    //error, no parent but the dir exists!
+                    assert(false);
+                }
+            } else {
+                //create the modification commit
+                FsObject::Commit modif_commit{ last_new_commit.id, last_new_commit.date, {} };
+                //now create a commit to go from my 
+                createNewMergeCommit(gooddir->getId(), modif_commit, gooddir->getCurrent(), new_commit_state);
+                //add commit
+                static_cast<FsDirectoryInMemory*>(gooddir.get())->replaceContent(new_commit_state, modif_commit);
+            }
+        }
+        return true;
+    }
 }

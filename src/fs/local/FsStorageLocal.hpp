@@ -1,6 +1,8 @@
 #pragma once
 
 #include "fs/base/FsStorage.hpp"
+#include "fs/base/FsFile.hpp"
+#include "fs/base/FsDirectory.hpp"
 #include "utils/Utils.hpp"
 
 #include <atomic>
@@ -9,45 +11,32 @@
 #include <unordered_map>
 
 namespace supercloud {
-    class FsDirectoryInMemory;
-    class FsFileInMemory;
-    class FsChunkInMemory;
+    class FsDirectoryLocal;
+    class FsChunkLocal;
 
-    class Clock {
-    public:
-        virtual DateTime getCurrrentTime() = 0;
-    };
-
-    class FsSerializableInMemory {
-    public:
-        //virtual void serialize(ByteBuff& buffer) = 0;
-        static FsEltPtr deserialize(ByteBuff& buffer);
-        static void serialize(FsEltPtr obj, ByteBuff& buffer);
-    };
-
-    class FsObjectInMemory {
+    class FsObjectLocal {
     protected:
-        uint16_t computeDepth() const {
-            if (!m_loaded_parent || m_loaded_parent.get() == this) return 0;
-            return m_loaded_parent->getDepth() + 1;
-        }
+        std::filesystem::path m_real_file_path;
     public:
-        std::shared_ptr<FsDirectoryInMemory> m_loaded_parent;
-        virtual void remove(DateTime time, FsID renamed_to) = 0;
-        void set_loaded_parent(std::shared_ptr<FsDirectoryInMemory> parent);
-    };
+        std::shared_ptr<FsDirectoryLocal> m_loaded_parent;
+        virtual void remove(DateTime time, FsID renamed_to, const std::filesystem::path& new_path) = 0;
+        void set(std::shared_ptr<FsDirectoryLocal> parent, const std::filesystem::path& new_path);
+        std::filesystem::path getRealPath() { return m_real_file_path; }
 
-    class FsStorageInMemory : public FsStorage {
+    };
+    class FsStorageLocal : public FsStorage {
     protected:
-        std::unordered_map<FsID, FsEltPtr> m_database;
+        std::unordered_map<FsID, FsEltPtr> database;
         std::atomic<uint64_t> m_id_generator;
         FsID m_root_id;
-
-        std::shared_ptr<Clock> m_clock;
+        std::filesystem::path m_root_dir;
+        std::filesystem::path m_deleted_dir;
 
         virtual FsID getNextId() override;
+        std::string remove_root_dir_prefix(const std::filesystem::path&);
     public:
-        FsStorageInMemory(ComputerId my_id, std::shared_ptr<Clock> clock) : FsStorage(my_id), m_clock(clock){}
+        FsStorageLocal(ComputerId my_id, std::filesystem::path root_dir, std::filesystem::path deleted_dir) : FsStorage(my_id),
+            m_root_dir(root_dir), m_deleted_dir(deleted_dir) {}
 
         //get elts
         virtual bool hasLocally(FsID id) override;
@@ -126,19 +115,14 @@ namespace supercloud {
         virtual void deleteObject(FsObjectPtr old_file) override;
 
 
-        virtual void serialize(const std::filesystem::path& file) override;
+        void save_all(const std::filesystem::path& file);
 
-        virtual void deserialize(const std::filesystem::path& file) override;
+        void load_all(const std::filesystem::path& file);
+        static FsEltPtr deserialize(ByteBuff& buffer, FsStorageLocal& database);
+        static void serialize(FsEltPtr obj, ByteBuff& buffer);
 
         std::vector<FsDirPtr> getDirs(FsDirPtr dir);
 
         std::vector<FsFilePtr> getFiles(FsDirPtr dir);
-
-
-        virtual bool mergeFileCommit(const FsObject& new_commit) override;
-        virtual bool mergeDirectoryCommit(const FsObject& new_commit) override;
-
-    protected:
-        size_t createNewMergeCommit(FsID file_id, FsObject::Commit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks);
     };
 }
