@@ -29,12 +29,12 @@ namespace supercloud {
 		SEND_CHUNK_AVAILABILITY,
 		// can you give me this chunk/file?
 		GET_CHUNK_REACHABLE,
-		// yes/no (with how many hop) i can send you these.
+		// yes/no (with how many hop) i can send you the chunk(s).
 		SEND_CHUNK_REACHABLE,
-		//want information&data about a chunk/file
-		GET_CHUNK,
-		// give all the information&data we have about the chunk/file requested
-		SEND_CHUNK,
+		//want information&data about a chunk
+		GET_SINGLE_CHUNK,
+		// give all the information&data we have about the chunk requested
+		SEND_SINGLE_CHUNK,
 		// synch properties (what's its limits, what it keep where, what is your userid, your groups)
 		//TODO
 		GET_HOST_PROPERTIES,

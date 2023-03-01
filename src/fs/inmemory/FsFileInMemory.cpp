@@ -26,7 +26,7 @@ namespace supercloud {
             buffer.putULong(thi->m_commits.front().id);
             buffer.putLong(thi->m_commits.front().date);
         } else {
-            for (Commit& commit : thi->m_commits) {
+            for (FsObjectCommit& commit : thi->m_commits) {
                 buffer.putULong(commit.id);
                 buffer.putLong(commit.date);
                 buffer.putSize(commit.changes.size());
@@ -86,7 +86,7 @@ namespace supercloud {
         this->m_size += new_chunk->size() - old->size();
     }
 
-    void FsFileInMemory::replaceContent(const std::vector<FsID>& new_content, const FsObject::Commit& commit, size_t new_size) {
+    void FsFileInMemory::replaceContent(const std::vector<FsID>& new_content, const FsObjectCommit& commit, size_t new_size) {
         FsObject::replaceContent(new_content, commit);
         m_size = new_size;
     }

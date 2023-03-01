@@ -19,7 +19,7 @@ namespace supercloud {
 			}
 		}
 	public:
-		FsDirectory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) : FsObject(id, date, name, puga, parent) {}
+		FsDirectory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) : FsObject(id, date, name, puga, parent) { assert(FsElt::isDirectory(id)); }
 		virtual std::tuple<FsID, DateTime> getLastModification() const override {
 			return { this->m_last_modification_commit_id, this->m_last_modification_date };
 		}
@@ -28,7 +28,7 @@ namespace supercloud {
 	class FsDirectoryStub : public FsDirectory {
 		FsDirectoryStub(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) : FsDirectory(id, date, name, puga, parent) {}
 		virtual std::tuple<FsID, DateTime> getLastModification() { return {}; }
-		std::vector<Commit>& commits() { return m_commits; }
+		std::vector<FsObjectCommit>& commits() { return m_commits; }
 		std::vector<FsID>& current() { return m_current_state; }
 	};
 }

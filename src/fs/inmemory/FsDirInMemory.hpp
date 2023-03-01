@@ -13,7 +13,7 @@ namespace supercloud {
         void addFile(std::shared_ptr<FsFileInMemory> file);
         void addDir(std::shared_ptr<FsDirectoryInMemory> file);
         void setFiles(std::vector<FsID> new_items, FsID commit_id, DateTime commit_time);
-        void replaceContent(const std::vector<FsID>& new_content, const FsObject::Commit& commit);
+        void replaceContent(const std::vector<FsID>& new_content, const FsObjectCommit& commit);
         void delFile(FsID to_del, FsID commit_id, DateTime commit_time);
         virtual void remove(DateTime time, FsID renamed_to) override;
         static void serialize(FsDirectoryInMemory* to_serialize, ByteBuff& buffer);

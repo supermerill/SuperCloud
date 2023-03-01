@@ -12,6 +12,7 @@ namespace supercloud {
     class FsDirectoryInMemory;
     class FsFileInMemory;
     class FsChunkInMemory;
+    struct FsObjectCommit;
 
     class Clock {
     public:
@@ -27,10 +28,7 @@ namespace supercloud {
 
     class FsObjectInMemory {
     protected:
-        uint16_t computeDepth() const {
-            if (!m_loaded_parent || m_loaded_parent.get() == this) return 0;
-            return m_loaded_parent->getDepth() + 1;
-        }
+        uint16_t computeDepth() const;
     public:
         std::shared_ptr<FsDirectoryInMemory> m_loaded_parent;
         virtual void remove(DateTime time, FsID renamed_to) = 0;
@@ -41,18 +39,16 @@ namespace supercloud {
     protected:
         std::unordered_map<FsID, FsEltPtr> m_database;
         std::atomic<uint64_t> m_id_generator;
-        FsID m_root_id;
 
         std::shared_ptr<Clock> m_clock;
 
-        virtual FsID getNextId() override;
+        virtual FsID getNextId(FsType type) override;
     public:
         FsStorageInMemory(ComputerId my_id, std::shared_ptr<Clock> clock) : FsStorage(my_id), m_clock(clock){}
 
         //get elts
         virtual bool hasLocally(FsID id) override;
         virtual FsEltPtr load(FsID id) override;
-        virtual FsID getRoot() override;
         FsDirPtr createNewRoot();
         //create / modify elts
         // ==================================== chunk ====================================
@@ -130,15 +126,24 @@ namespace supercloud {
 
         virtual void deserialize(const std::filesystem::path& file) override;
 
+        virtual bool checkFilesystem() override;
+
         std::vector<FsDirPtr> getDirs(FsDirPtr dir);
 
         std::vector<FsFilePtr> getFiles(FsDirPtr dir);
 
-
-        virtual bool mergeFileCommit(const FsObject& new_commit) override;
-        virtual bool mergeDirectoryCommit(const FsObject& new_commit) override;
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="new_commit"></param>
+        /// <param name="extra_db"></param>
+        /// <returns>true if the file now exists</returns>
+        virtual bool mergeFileCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) override;
+        virtual bool mergeDirectoryCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) override;
+        bool mergeObjectCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db);
+        //TODO: optimization for mergeCommits(const std::unordered_map<FsID, const FsElt*>& commits), by 'consuming' commits when done in recursive mode.
 
     protected:
-        size_t createNewMergeCommit(FsID file_id, FsObject::Commit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks);
+        size_t createNewFileMergeCommit(FsID file_id, FsObjectCommit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks);
     };
 }

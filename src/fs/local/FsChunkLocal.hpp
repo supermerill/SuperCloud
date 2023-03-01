@@ -34,7 +34,7 @@ namespace supercloud {
 		 * @param size size of things readed.
 		 * @return true if possible. false if offset and size put us out of bounds.
 		 */
-		virtual bool read(ByteBuff& to_append, size_t offset, size_t size) override;
+		virtual bool read(ByteBuff& to_append, size_t offset, size_t size) const override;
 
 		ByteBuff readAll();
 
@@ -79,7 +79,7 @@ namespace supercloud {
 		 *
 		 * @return in ms
 		 */
-		virtual long getLastAccessDate() { return 0; }
+		virtual long getLastAccessDate() const { return 0; }
 		/**
  * Visitor function.
  * @param visitor the visitor who visit this element.

@@ -14,7 +14,6 @@
 namespace supercloud {
 
     PhysicalServer::PhysicalServer() {
-        this->m_listen_socket = ServerSocket::factory->create();
     }
 
     std::shared_ptr<PhysicalServer> PhysicalServer::createAndInit(const std::filesystem::path& folderPath) {
@@ -29,6 +28,9 @@ namespace supercloud {
         if (my_peer_id == 0 || my_peer_id == NO_PEER_ID) {
             ptr->m_cluster_id_mananger->getSelfPeer()->setPeerId(1 + rand_u63());
         }
+
+        //listen? check if it's not better to create it just before we need it.
+        ptr->m_listen_socket = ServerSocket::factory->create();
 
         return ptr;
     }
@@ -182,6 +184,9 @@ namespace supercloud {
                 std::shared_ptr<PhysicalServer> me = ptr();
                 std::thread socketListenerThread([me, port]() {
                     try {
+                        if (!me->m_listen_socket) {
+                            me->m_listen_socket = ServerSocket::factory->create();
+                        }
                         me->getIdentityManager().getSelfPeer()->setPort(port);
                         me->m_listen_socket->init(port);
                         log(std::to_string(me->getPeerId() % 100) + " Listen to " + me->m_listen_socket->endpoint().address() + " : " + me->m_listen_socket->endpoint().port() + "\n");

@@ -32,7 +32,7 @@ namespace supercloud {
         std::filesystem::path m_root_dir;
         std::filesystem::path m_deleted_dir;
 
-        virtual FsID getNextId() override;
+        virtual FsID getNextId(FsType type) override;
         std::string remove_root_dir_prefix(const std::filesystem::path&);
     public:
         FsStorageLocal(ComputerId my_id, std::filesystem::path root_dir, std::filesystem::path deleted_dir) : FsStorage(my_id),
@@ -41,7 +41,6 @@ namespace supercloud {
         //get elts
         virtual bool hasLocally(FsID id) override;
         virtual FsEltPtr load(FsID id) override;
-        virtual FsID getRoot() override;
         FsDirPtr createNewRoot();
         //create / modify elts
         // ==================================== chunk ====================================

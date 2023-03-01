@@ -18,7 +18,7 @@ namespace supercloud {
 		const uint64_t m_hash;
 		bool m_is_local = false;
 	public:
-		FsChunk(FsID id, DateTime date, uint64_t hash) :FsElt(id, date), m_hash(hash) {}
+		FsChunk(FsID id, DateTime date, uint64_t hash) :FsElt(id, date), m_hash(hash) { assert(FsElt::isChunk(id)); }
 
 		/// <summary>
 		/// use the hash to see if the data we have are in sync with it.

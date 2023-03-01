@@ -23,7 +23,7 @@ namespace supercloud {
     }
 
     void FsDirectoryInMemory::setFiles(std::vector<FsID> new_items, FsID commit_id, DateTime commit_time) {
-        FsObject::Commit commit;
+        FsObjectCommit commit;
         commit.id = commit_id;
         commit.date = commit_time;
         for (FsID id : new_items) {
@@ -31,7 +31,7 @@ namespace supercloud {
         }
         FsObject::replaceContent(new_items, commit);
     }
-    void FsDirectoryInMemory::replaceContent(const std::vector<FsID>& new_content, const FsObject::Commit& commit) {
+    void FsDirectoryInMemory::replaceContent(const std::vector<FsID>& new_content, const FsObjectCommit& commit) {
         FsObject::replaceContent(new_content, commit);
     }
 
@@ -76,7 +76,7 @@ namespace supercloud {
             buffer.putULong(thi->m_commits.front().id);
             buffer.putLong(thi->m_commits.front().date);
         } else {
-            for (Commit& commit : thi->m_commits) {
+            for (FsObjectCommit& commit : thi->m_commits) {
                 buffer.putULong(commit.id);
                 buffer.putLong(commit.date);
                 buffer.putSize(commit.changes.size());

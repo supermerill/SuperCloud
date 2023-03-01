@@ -15,6 +15,12 @@ namespace supercloud {
     class FsChunk;
     class FsObject;
     class FsElt;
+    enum class FsType : uint8_t {
+        NONE = 0, //used for commit when it's not a creation
+        CHUNK = 1,
+        FILE = 2,
+        DIRECTORY = 3
+    };
 
     typedef std::shared_ptr<FsChunk> FsChunkPtr;
     typedef std::shared_ptr<FsFile> FsFilePtr;
@@ -51,12 +57,14 @@ namespace supercloud {
 
         std::recursive_mutex m_write_mutex;
 
-        virtual FsID getNextId() = 0;
+        virtual FsID getNextId(FsType type) = 0;
     public:
         FsStorage(ComputerId my_id) : m_cid(my_id) {}
 
         ComputerId getMyComputerId() { return m_cid; }
-        virtual FsID getRoot() = 0;
+
+        //the root is always the id 3 (a directory with id 0 from computer 0).
+        FsID getRoot() const;
 
         /// <summary>
         /// lock if you want to modify the filesystem.
@@ -153,14 +161,14 @@ namespace supercloud {
         /// <param name="new_commit">stub object (hence why it's not a smart pointer: it's a temporary object). 
         /// If the associated object isn't created, a new implementation object is created.</param>
         /// <returns>true if it uses the new state</returns>
-        virtual bool mergeFileCommit(const FsObject& new_commit) = 0;
+        virtual bool mergeFileCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) = 0;
 
         /// <summary>
         /// ask this filesystem to create a new dir/state from given information.
         /// </summary>
         /// <param name="new_commit">stub object. If the associated object isn't created, a new implementation object is created.</param>
         /// <returns>true if it uses the new state</returns>
-        virtual bool mergeDirectoryCommit(const FsObject& new_commit) = 0;
+        virtual bool mergeDirectoryCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) = 0;
 
         /// <summary>
         /// check that the filesystem has no unknown ids
@@ -168,7 +176,7 @@ namespace supercloud {
         /// check that the commits are ordered by time.
         /// check that the commit chain allow to go to the current state.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>true if there is no error detected/fixed</returns>
         virtual bool checkFilesystem() = 0;
 
     };

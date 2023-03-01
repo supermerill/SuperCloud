@@ -50,10 +50,10 @@ namespace supercloud{
 	typedef int64_t DateTime;	// in miliseconds (+- 292 471 208 years from 1970)
 	typedef int32_t Date;		// in minutes (+-4 080 years from 1970)
 
-	Date toDate(DateTime time) {
+	inline Date toDate(DateTime time) {
 		return Date(time / 60000);
 	}
-	DateTime toDateTime(Date date) {
+	inline DateTime toDateTime(Date date) {
 		return DateTime(date) * 60000;
 	}
 
@@ -153,7 +153,8 @@ namespace supercloud{
 	}
 	//TODO: do full test 
 	namespace custom {
-		/// Little wrapper class over a vector to easier iteration on it when a erase is needed.
+		/// Little wrapper class over a vector to easier iteration on it when an erase is needed.
+		// Note that it only store the pointer to the vector, so don't give him an rhv
 		// it can go both direction with ++/next() and --/previous()
 		// usage stl-like:
 		//   for(auto it = ++custom::it{my_vec}; it.valid(); ++it){
@@ -167,7 +168,7 @@ namespace supercloud{
 		//   }
 		// usage with foreach macro:
 		//   foreach(it, vec){
-		//     if(it->bad()) it->erase();
+		//     if(it->bad()) it.erase();
 		//   }
 		template<class T>
 		class it {
@@ -177,7 +178,7 @@ namespace supercloud{
 			it(std::vector<T>* v, int32_t p) : vec(v), pos(p) {}
 		public:
 			it(std::vector<T>& v) : vec(&v), pos(-1) {}
-			it(std::vector<T>& v, start_end) : vec(&v), pos(start_end ? v.size() : -1) {}
+			it(std::vector<T>& v, bool start_end) : vec(&v), pos(start_end ? v.size() : -1) {}
 
 			/// check if the current position of this iterator point to a valid value.
 			bool valid() { return pos >= 0 && pos < vec->size(); }

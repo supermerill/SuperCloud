@@ -46,19 +46,19 @@ add_library(libsupercloud STATIC
 	fs/inmemory/FsChunkInMemory.cpp
 	fs/inmemory/FsStorageInMemory.hpp
 	fs/inmemory/FsStorageInMemory.cpp
-	fs/local/FsDirLocal.hpp
-	fs/local/FsDirLocal.cpp
-	fs/local/FsFileLocal.hpp
-	fs/local/FsFileLocal.cpp
-	fs/local/FsChunkLocal.hpp
-	fs/local/FsChunkLocal.cpp
-	fs/local/FsStorageLocal.hpp
-	fs/local/FsStorageLocal.cpp
+#	fs/local/FsDirLocal.hpp
+#	fs/local/FsDirLocal.cpp
+#	fs/local/FsFileLocal.hpp
+#	fs/local/FsFileLocal.cpp
+#	fs/local/FsChunkLocal.hpp
+#	fs/local/FsChunkLocal.cpp
+#	fs/local/FsStorageLocal.hpp
+#	fs/local/FsStorageLocal.cpp
 	synch/AbstractFSMessageManager.hpp
-	synch/ExchangeChunk.hpp
-	synch/PropagateChange.cpp
-	synch/PropagateChange.hpp
-	synch/PropagateChangeAndGrabData.hpp
+	synch/ExchangeChunkMessageManager.cpp
+	synch/ExchangeChunkMessageManager.hpp
+	synch/SynchTreeMessageManager.cpp
+	synch/SynchTreeMessageManager.hpp
 	synch/RequestCheckForModification.hpp
 	synch/SynchroDb.cpp
 	synch/SynchroDb.hpp

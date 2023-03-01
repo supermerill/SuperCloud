@@ -6,14 +6,8 @@
 #include <memory>
 
 namespace supercloud {
-	enum class FSType : uint8_t {
-		NONE = 0, //used for commit when it's not a creation
-		CHUNK = 1,
-		FILE = 2,
-		DIRECTORY = 3
-	};
 	constexpr uint64_t NO_TYPE_MASK = uint64_t(-4);
-	constexpr uint64_t SEED_MASK = uint64_t(0x000000FFFFFFFFFF);
+	constexpr uint64_t SEED_MASK = uint64_t(0x000000FFFFFFFFFC);
 	class FsElt {
 	public:
 	protected:
@@ -39,8 +33,9 @@ namespace supercloud {
 		ComputerId getOwner() const { return getComputerId(m_id); }
 		FsID getId() const { return m_id; }
 
-		static inline FsID createId(uint64_t seed_id, ComputerId owner) {
-			return (seed_id & SEED_MASK) | (uint64_t(owner) << 40);
+		// seed id is between 0 and 2^38
+		static inline FsID createId(FsType type, uint64_t seed_id, ComputerId owner) {
+			return uint8_t(type) | (seed_id<<2 & SEED_MASK) | (uint64_t(owner) << 40);
 		}
 		static inline ComputerId getComputerId(FsID id) {
 			return ComputerId(id >> 40) & COMPUTER_ID_MASK;
@@ -75,29 +70,29 @@ namespace supercloud {
 		static FsObjectPtr toObject(FsEltPtr elt);
 
 		static inline bool isFile(FsID id) {
-			return ((id & 0x03) == uint8_t(FSType::FILE));
+			return ((id & 0x03) == uint8_t(FsType::FILE));
 		}
 		static inline bool isChunk(FsID id) {
-			return ((id & 0x03) == uint8_t(FSType::CHUNK));
+			return ((id & 0x03) == uint8_t(FsType::CHUNK));
 		}
 		static inline bool isDirectory(FsID id) {
-			return ((id & 0x03) == uint8_t(FSType::DIRECTORY));
+			return ((id & 0x03) == uint8_t(FsType::DIRECTORY));
 		}
 		static inline bool isObject(FsID id) {
-			return ((id & uint8_t(FSType::FILE)) == uint8_t(FSType::FILE));
+			return ((id & uint8_t(FsType::FILE)) == uint8_t(FsType::FILE));
 		}
 
 		static inline FsID setNone(FsID id) {
 			return ((id & NO_TYPE_MASK));
 		}
 		static inline FsID setFile(FsID id) {
-			return ((id & NO_TYPE_MASK) | FsID(FSType::FILE));
+			return ((id & NO_TYPE_MASK) | FsID(FsType::FILE));
 		}
 		static inline FsID setChunk(FsID id) {
-			return ((id & NO_TYPE_MASK) | FsID(FSType::CHUNK));
+			return ((id & NO_TYPE_MASK) | FsID(FsType::CHUNK));
 		}
 		static inline FsID setDirectory(FsID id) {
-			return ((id & NO_TYPE_MASK) | FsID(FSType::DIRECTORY));
+			return ((id & NO_TYPE_MASK) | FsID(FsType::DIRECTORY));
 		}
 	};
 

@@ -54,7 +54,7 @@ namespace supercloud {
         //number of times it was read locally. High number means that it's useful to keep this file here.
         size_t nb_read_local = 0;
         Date date_last_local_read = 0;
-        ComputerId current_best_path = NO_COMPUTER_ID;
+        ComputerId current_best_path = NO_COMPUTER_ID; //Note: it may be useful to also store the peerid?
     };
 
     class SynchroDb {
@@ -126,7 +126,7 @@ namespace supercloud {
         /// </summary>
         /// <param name="new_commit"></param>
         /// <param name="commit_time"></param>
-        bool mergeCommit(const FsElt& to_merge);
+        bool mergeCommit(const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db);
 
         void load(std::filesystem::path& file);
         void save(std::filesystem::path& file);
@@ -225,7 +225,7 @@ namespace supercloud {
         int setCUGA(FsObjectPtr obj, CUGA rights);
 
         ComputerId getOurComputerId() { return m_db->getComputerId(); }
-        uint32_t getUserId(ComputerId cid) { return m_db->getState(cid).user_id; }
+        uint32_t getUserId(ComputerId cid) { return m_db->getComputerState(cid).user_id; }
 
     };
 

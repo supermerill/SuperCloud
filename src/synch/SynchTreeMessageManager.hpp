@@ -13,28 +13,42 @@ namespace supercloud {
 
 	class SynchTreeMessageManager : public AbstractMessageManager, public std::enable_shared_from_this<SynchTreeMessageManager> {
 
+	public:
+
 		struct TreeAnswerElt {
 			FsID elt_id;
 			uint16_t elt_depth;
+			size_t elt_size;
 			FsID last_commit_id;
 			DateTime last_commit_time;
+			bool operator==(const TreeAnswerElt& other) const {
+				return elt_id == other.elt_id && elt_depth == other.elt_depth && elt_size == other.elt_size
+					&& last_commit_id == other.last_commit_id && last_commit_time == other.last_commit_time;
+			}
 		};
 		struct TreeAnswerEltChange : TreeAnswerElt {
 			std::vector<FsID> state;
+			bool operator==(const TreeAnswerEltChange& other) const {
+				return TreeAnswerElt::operator==(other) && state == other.state;
+			}
 		};
 		struct TreeAnswerEltDeleted : TreeAnswerElt {
 			FsID renamed_to; //can be 0 if just deleted
+			bool operator==(const TreeAnswerEltDeleted& other) const {
+				return TreeAnswerElt::operator==(other) && renamed_to == other.renamed_to;
+			}
 		};
 		//a fake object, to have all information about the last state of the object (with id & date of the last commit, but no data inside)
 		class FsObjectTreeAnswer : public FsObject {
 			uint16_t m_depth;
+			size_t m_size;
 		public:
-			FsObjectTreeAnswer(FsID id, uint16_t depth, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state) :
-				FsObject(id, date, name, puga, parent), m_depth(depth) {
+			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state) :
+				FsObject(id, date, name, puga, parent), m_depth(depth), m_size(size) {
 				m_current_state = state;
 			}
-			FsObjectTreeAnswer(FsID id, uint16_t depth, std::vector<FsID> state) :
-				FsObject(id, 0, "", 0, 0), m_depth(depth) {
+			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, std::vector<FsID> state) :
+				FsObject(id, 0, "", 0, 0), m_depth(depth), m_size(size) {
 				m_current_state = state;
 			}
 			FsObjectTreeAnswer& setCommit(FsID id_commit, DateTime date) {
@@ -48,17 +62,48 @@ namespace supercloud {
 				m_renamed_to = renamed_to;
 				return *this;
 			}
+			//default -set
+			FsObjectTreeAnswer(const FsObjectTreeAnswer& o) // can copy
+				:FsObject(o.m_id, o.m_creation_date, o.m_name, o.m_puga, o.m_parent), m_depth(o.m_depth) {
+				m_current_state = std::move(o.m_current_state);
+			}
+			FsObjectTreeAnswer(FsObjectTreeAnswer&& o) // can move
+				:FsObject(o.m_id, o.m_creation_date, o.m_name, o.m_puga, o.m_parent), m_depth(o.m_depth) {
+				m_current_state = std::move(o.m_current_state);
+			}
 			uint16_t getDepth() const override {
 				return m_depth;
 			}
+			size_t size() const override {
+				return m_size;
+			}
+			bool operator==(const FsObjectTreeAnswer& other) const {
+				return m_depth == other.m_depth && m_size == other.m_size && m_id == other.m_id
+					&& m_creation_date == other.m_creation_date && m_puga == other.m_puga && m_name == other.m_name
+					&& m_group_id == other.m_group_id && m_parent == other.m_parent && m_current_state == other.m_current_state
+					&& m_commits == other.m_commits && m_date_deleted == other.m_date_deleted && m_renamed_to == other.m_renamed_to
+					&& m_renamed_from == other.m_renamed_from;
+			}
 		};
+
+		struct TreeRequest {
+			//what we want as information (the FsID we don't know about)
+			std::vector<FsID> roots;
+			//how many information
+			size_t depth; // 0=only these one, 1 = also their childs, etc... uint16_t(-1) (ie the max as it's unsigned) for evrything, but i guess 16k depth is enough
+			//last commit we have for this element (if it's the same you have, then you can return a null answer)
+			FsID last_commit_received; // note: currently not used to crate the answer TODO: do something with it or erase?
+			// last time we fetched you (please give all information that you received/modified since that moment)
+			DateTime last_fetch_time;
+		};
+		typedef std::shared_ptr<FsObjectTreeAnswer> FsObjectTreeAnswerPtr;
 		struct TreeAnswer {
 			ComputerId from;
 			// time of the fetch
 			DateTime answer_time;
 			// all the element in the tree requested that have been modified / created.
 			std::vector<TreeAnswerEltChange> modified;
-			std::vector<FsObjectTreeAnswer> created;
+			std::vector<FsObjectTreeAnswerPtr> created; //ptr because it's immutable and vector can't store immutable things...
 			// 1 here are the elements that are renamed to something else
 			// 2 the deleted element may not be listed. You have to infer them (all childs of a modified dir that are not in its current state anymore are deleted)
 			// for renamed element, check the renamed_from from the created elements.
@@ -67,25 +112,23 @@ namespace supercloud {
 			std::vector<TreeAnswerEltDeleted> deleted;
 		};
 
+	protected:
+
 		std::shared_ptr<FsStorage> m_filesystem;
 		std::shared_ptr<SynchroDb> m_syncro;
-		std::shared_ptr<ClusterManager> m_clusterManager;
+		std::shared_ptr<ClusterManager> m_cluster_manager;
 		
 		std::mutex m_mutex_incomplete_requests;
 		std::map<ComputerId, TreeAnswer> m_incomplete_requests;
 
-		inline void register_listener() {
-			m_clusterManager->registerListener(*SynchMessagetype::GET_TREE, this->ptr());
-			m_clusterManager->registerListener(*SynchMessagetype::SEND_TREE, this->ptr());
-			m_clusterManager->registerListener(*SynchMessagetype::GET_HOST_PROPERTIES, this->ptr());
-			m_clusterManager->registerListener(*SynchMessagetype::SEND_HOST_PROPERTIES, this->ptr());
-			// fetch each minute
-			m_clusterManager->registerListener(*UnnencryptedMessageType::TIMER_MINUTE, this->ptr());
-		}
+		void register_listener();
+
+		void fillTreeAnswer(TreeAnswer& answer, FsID elt_id, size_t depth, DateTime since);
 	public:
 		//factory
-		[[nodiscard]] static std::shared_ptr<SynchTreeMessageManager> create(ClusterManager& physicalServer) {
+		[[nodiscard]] static std::shared_ptr<SynchTreeMessageManager> create(std::shared_ptr<ClusterManager> physical_server) {
 			std::shared_ptr<SynchTreeMessageManager> pointer = std::shared_ptr<SynchTreeMessageManager>{ new SynchTreeMessageManager(/*TODO*/) };
+			pointer->m_cluster_manager = physical_server;
 			pointer->register_listener();
 			return pointer;
 		}
@@ -98,133 +141,17 @@ namespace supercloud {
 		void receiveMessage(PeerPtr peer, uint8_t messageId, ByteBuff message) override;
 
 
-		struct TreeRequest {
-			//what we want as information (the commit id we don't know about)
-			std::vector<FsID> roots;
-			//how many information
-			size_t depth; // 0=infinite, 1 = only the root Id, etc...
-			//last commit we have for this element (if it's the same you have, then you can return a null answer)
-			FsID last_commit_received;
-			// last time we fetched you (please give all information that you received/modified since that moment)
-			DateTime last_fetch_time;
-		};
 
 
-		ByteBuff createTreeRequestMessage(TreeRequest& request);
-		TreeAnswer getTreeRequestAnswer(ByteBuff& request);
+		ByteBuff writeTreeRequestMessage(const TreeRequest& request);
+		TreeRequest readTreeRequestMessage(ByteBuff& buffer);
 
-		void useTreeRequestAnswer(PeerPtr sender, TreeAnswer&& answer) {
-			std::lock_guard lock{ m_mutex_incomplete_requests };
-			//fusion the result with currently waiting answers?
-			if (auto it = m_incomplete_requests.find(sender->getComputerId()); it != m_incomplete_requests.end()) {
-				//add it into answer
-				answer.modified.insert(answer.modified.end(), it->second.modified.begin(), it->second.modified.end());
-				answer.created.insert(answer.created.end(), it->second.created.begin(), it->second.created.end());
-				answer.deleted.insert(answer.deleted.end(), it->second.deleted.begin(), it->second.deleted.end());
-				//remove it from the map
-				m_incomplete_requests.erase(it);
-			}
+		ByteBuff writeTreeAnswerMessage(const TreeAnswer& request);
+		TreeAnswer readTreeAnswerMessage(ByteBuff& buffer);
 
-			//remove change/create if they are deleted (shouldn't be transmitted, but it's better to check)
-			//TODO test
-			std::unordered_set<FsID> create_change;
-			for (const FsObjectTreeAnswer& obj : answer.created) {
-				create_change.insert(obj.getId());
-			}
-			for (const TreeAnswerEltChange& obj : answer.modified) {
-				create_change.insert(obj.elt_id);
-			}
-			for (const TreeAnswerEltDeleted& del_obj : answer.deleted) {
-				if (create_change.find(del_obj.elt_id) != create_change.end()) {
-					foreach(it_obj, answer.created) {
-						if (del_obj.elt_id == it_obj->getId()) {
-							it_obj.erase();
-						}
-					}
-					foreach(it_obj, answer.modified) {
-						if (del_obj.elt_id == it_obj->elt_id) {
-							it_obj.erase();
-						}
-					}
-					create_change.erase(del_obj.elt_id);
-				}
-			}
+		TreeAnswer answerTreeRequest(const PeerPtr sender, TreeRequest&& request);
 
-			//for each id, check that we have already each "changed" object inside our fs. (but for chunks, chunks can be missed)
-			// TODO: test
-			//maybe it's better to just get all information for all of them, just in case?
-			std::unordered_set<FsID> unkown_ids;
-			for (const FsObjectTreeAnswer& obj : answer.created) {
-				if (FsElt::isDirectory(obj.getId())) {
-					for (const FsID& id : obj.getCurrent()) {
-						unkown_ids.insert(id);
-					}
-				}
-			}
-			for (const TreeAnswerEltChange& obj : answer.modified) {
-				if (FsElt::isDirectory(obj.elt_id)) {
-					for (const FsID& id : obj.state) {
-						unkown_ids.insert(id);
-					}
-				}
-			}
-			for (const FsObjectTreeAnswer& obj : answer.created) {
-				unkown_ids.erase(obj.getId());
-			}
-			if (unkown_ids.size() > 0) {
-				//for each id in the current state, check if it's inside our fs.
-					//if not, send another request about it
-				TreeRequest request;
-				// for each of them, send a request to get it. (date=0 to be sure it answer with a create answer)
-				//SynchState last_synch = m_syncro->getSynchState(sender->getComputerId());
-				//request.last_commit_received = last_synch.last_commit_received_date;
-				//request.last_fetch_time = last_synch.last_fetch_date;
-				request.last_commit_received = 0;
-				request.last_fetch_time = 0;
-				request.depth = 0;
-				for (const TreeAnswerEltChange& obj : answer.modified) {
-					if (unkown_ids.erase(obj.elt_id) && !m_filesystem->hasLocally(obj.elt_id)) {
-						request.roots.push_back(obj.elt_id);
-					}
-				}
-				for (const FsID& id : unkown_ids) {
-					if (!m_filesystem->hasLocally(id)) {
-						request.roots.push_back(id);
-					}
-				}
-
-				m_incomplete_requests[sender->getComputerId()] = answer;
-				sender->writeMessage(*SynchMessagetype::GET_TREE, this->createTreeRequestMessage(request));
-			} else {
-				//the changes are "complete"
-				// have to ordered the commit items, by depth in the filesystem.
-				std::vector<FsObjectTreeAnswer> stub_storage;
-				std::map<uint16_t, const FsObjectTreeAnswer*> ordered_stubs;
-				std::lock_guard lock{ m_filesystem->synchronize() };
-				for (const FsObjectTreeAnswer& obj : answer.created) {
-					ordered_stubs[obj.getDepth()] = &obj;
-				}
-				for (const TreeAnswerEltChange& obj : answer.modified) {
-					stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.state);
-					stub_storage.back().setCommit(obj.last_commit_id, obj.last_commit_time);
-					ordered_stubs[obj.elt_depth] = &stub_storage.back();
-				}
-                for (const TreeAnswerEltDeleted& obj : answer.deleted) {
-                    stub_storage.emplace_back(obj.elt_id, obj.elt_depth, std::vector<FsID>{});
-                    stub_storage.back().setCommit(obj.last_commit_id, obj.last_commit_time)
-                                       .setDeleted(obj.renamed_to, obj.last_commit_time);
-                    ordered_stubs[obj.elt_depth] = &stub_storage.back();
-                }
-				//update our fs with these
-				for (const auto& depth2stub : ordered_stubs) {
-					m_syncro->mergeCommit(*depth2stub.second);
-				}
-#ifndef NDEBUG
-				// assert that the resulted filesystem is safe
-				m_filesystem->checkFilesystem();
-#endif
-			}
-		}
+		void useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& answer);
 	};
 	//	void putHeader(ByteBuff message, FsEltPtr obj) {
 	//		message.putLong(obj->getDate());

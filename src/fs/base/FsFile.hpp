@@ -25,10 +25,10 @@ namespace supercloud {
             }
         }
 
-        //cache, but useful one
+        // in bytes, cache, but useful one
         size_t m_size;
 	public:
-        FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) :FsObject(id, date, name, puga, parent) {}
+        FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) :FsObject(id, date, name, puga, parent) { assert(FsElt::isFile(id)); }
 
 		virtual std::tuple<FsID, DateTime> getLastModification() const override {
 			//std::lock_guard lock{ m_modify_load_mutex };
@@ -38,7 +38,7 @@ namespace supercloud {
 			return { m_commits.back().id, m_commits.back().date };
 		}
 
-        size_t size() const { return m_size; }
+        virtual size_t size() const override { return m_size; }
 //
 //		/**
 //		 * Create a new chunk. It will not be added to the file content right now.
@@ -279,7 +279,7 @@ namespace supercloud {
     class FsFileStub : public FsFile {
         FsFileStub(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) : FsFile(id, date, name, puga, parent) {}
         virtual std::tuple<FsID, DateTime> getLastModification() { return {}; }
-        std::vector<Commit>& commits() { return m_commits; }
+        std::vector<FsObjectCommit>& commits() { return m_commits; }
         std::vector<FsID>& current() { return m_current_state; }
     };
 }
