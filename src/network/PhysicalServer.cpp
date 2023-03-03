@@ -16,9 +16,10 @@ namespace supercloud {
     PhysicalServer::PhysicalServer() {
     }
 
-    std::shared_ptr<PhysicalServer> PhysicalServer::createAndInit(const std::filesystem::path& folderPath) {
+    std::shared_ptr<PhysicalServer> PhysicalServer::createAndInit(std::unique_ptr<Parameters>&& identity_parameters, std::shared_ptr<Parameters> install_parameters) {
         std::shared_ptr<PhysicalServer> ptr = std::shared_ptr<PhysicalServer>{ new PhysicalServer{} };
-        ptr->m_cluster_id_mananger = std::make_shared<IdentityManager>(*ptr, folderPath / "clusterIds.properties");
+        ptr->m_cluster_id_mananger = std::make_shared<IdentityManager>(*ptr, std::move(identity_parameters));
+        ptr->m_cluster_id_mananger->setInstallParameters(install_parameters);
         ptr->m_cluster_id_mananger->load();
         ptr->m_connection_manager = ConnectionMessageManager::create(ptr, ptr->m_state);
         ptr->m_cluster_admin_manager = ClusterAdminMessageManager::create(*ptr);
@@ -533,12 +534,17 @@ namespace supercloud {
         }
     }
 
-    void PhysicalServer::propagateMessage(PeerPtr sender, uint8_t messageId, ByteBuff& message) {
+    void PhysicalServer::propagateMessage(PeerPtr sender, uint8_t messageId, const ByteBuff& message) {
         // propagate message
-        std::vector<std::shared_ptr<AbstractMessageManager>>& lst = listeners[messageId];
+        //copy the list, to allow for registering/unregistering inside the calls
+        std::vector<std::shared_ptr<AbstractMessageManager>> lst;
+        {
+            std::lock_guard lock{ listeners_mutex };
+            lst = listeners[messageId];
+        }
         for (std::shared_ptr<AbstractMessageManager>& listener : lst) {
             if (!sender->isAlive() && messageId != *UnnencryptedMessageType::CONNECTION_CLOSED) { return; } // can be dead & connected, when closing (and emmiting CLOSE event)
-            // receiveMessage get message by value -> it gets a "copy", so it's okay to send the same to evryone.
+            // rewind as a ByteBuff's posisition can be changed even if const
             listener->receiveMessage(sender, messageId, message.rewind());
         }
     }

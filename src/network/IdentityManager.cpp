@@ -91,10 +91,10 @@ namespace supercloud{
 		return true;
 	}
 
-	void IdentityManager::create_from_install_file(const std::filesystem::path& currrent_filepath) {
-		//try to get data from the install file
-		std::filesystem::path abs_path = std::filesystem::absolute(currrent_filepath);
-		Parameters paramsNet{ abs_path.parent_path() / "network.properties" };
+	void IdentityManager::create_from_install_info() {
+		//try to get data from the install params (if any)
+		if (!m_install_parameters) return;
+		Parameters& paramsNet = *m_install_parameters;
 		if (!paramsNet.has("ClusterId")) {
 			//no previous data, load nothing plz.
 			log("No install data, please construct them!!!\n");
@@ -148,20 +148,16 @@ namespace supercloud{
 
 	void IdentityManager::load() {
 
-		//choose the file.
-		std::filesystem::path currrent_filepath = this->filepath;
-		bool exists = std::filesystem::exists(currrent_filepath);
-		if (!exists) {
-			currrent_filepath.replace_filename(currrent_filepath.filename().string() + std::string("_1"));
-			exists = std::filesystem::exists(currrent_filepath);
-			if (!exists) {
-				create_from_install_file(this->filepath);
-				return;
-			}
+		PeerList loaded_peers_copy;
+		Parameters& params_server_db = *m_parameters;
+		params_server_db.load();
+
+		//test if loaded
+		if (!params_server_db.has("clusterId")) {
+			create_from_install_info();
+			return;
 		}
 
-		PeerList loaded_peers_copy;
-		Parameters params_server_db{ currrent_filepath };
 		this->clusterId = params_server_db.getLong("clusterId");
 		this->myComputerIdState = (ComputerIdState)params_server_db.getInt("computerIdState");
 		Peer::ComputerIdSetter::setComputerId(*this->m_myself, (ComputerId)params_server_db.getInt("computerId"));
@@ -218,8 +214,8 @@ namespace supercloud{
 		}
 	}
 
-	void IdentityManager::save(const std::filesystem::path& filePath) const {
-		Parameters params_server_db{ filePath };
+	void IdentityManager::save() const {
+		Parameters& params_server_db = *m_parameters;
 		params_server_db.setLong("clusterId", this->clusterId);
 		params_server_db.setInt("computerId", this->m_myself->getComputerId());
 		if (this->m_myself->getPeerId() != 0 && this->m_myself->getPeerId() != NO_PEER_ID) {
@@ -369,7 +365,7 @@ namespace supercloud{
 
 	}
 
-	void IdentityManager::receivePublicKey(PeerPtr sender, ByteBuff& buffIn) {
+	void IdentityManager::receivePublicKey(PeerPtr sender, const ByteBuff& buffIn) {
 		//log(std::to_string(serv.getPeerId() % 100) + " (receivePublicKey) receive SEND_SERVER_PUBLIC_KEY from " + sender->getPeerId() % 100+"\n");
 		//ensure we have create a peer data for this peer
 		{ std::lock_guard lock(m_peer_data_mutex);
@@ -397,8 +393,6 @@ namespace supercloud{
 		if (it_msg == m_pid_2_emitted_msg.end() || forceNewOne) {
 			if (it_msg == m_pid_2_emitted_msg.end()) {
 				msg = to_hex_str(rand_u63());
-			} else {
-				msg = it_msg->second;
 			}
 			m_pid_2_emitted_msg[peer.getPeerId()] = msg;
 			//todo: encrypt it with our public key.
@@ -463,7 +457,7 @@ namespace supercloud{
 		return IdentityManager::Identityresult::OK;
 	}
 
-	ByteBuff IdentityManager::getIdentityDecodedMessage(const PublicKey& key, ByteBuff& buffIn) {
+	ByteBuff IdentityManager::getIdentityDecodedMessage(const PublicKey& key, const ByteBuff& buffIn) {
 		//get msg
 		size_t nbBytes = buffIn.getSize();
 		/*byte[] dataIn = new byte[nbBytes];
@@ -479,7 +473,7 @@ namespace supercloud{
 		return buffDecoded;
 	}
 
-	IdentityManager::Identityresult IdentityManager::answerIdentity(PeerPtr peer, ByteBuff& buffIn) {
+	IdentityManager::Identityresult IdentityManager::answerIdentity(PeerPtr peer, const ByteBuff& buffIn) {
 		//log(std::to_string(serv.getPeerId() % 100) + " (answerIdentity) receive GET_IDENTITY to " + peer->getPeerId() % 100+"\n");
 
 
@@ -521,7 +515,7 @@ namespace supercloud{
 		}
 	}
 
-	IdentityManager::Identityresult IdentityManager::receiveIdentity(PeerPtr peer, ByteBuff& message) {
+	IdentityManager::Identityresult IdentityManager::receiveIdentity(PeerPtr peer, const ByteBuff& message) {
 		//log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) receive SEND_IDENTITY to " + peer->getPeerId() % 100+"\n");
 
 
@@ -608,8 +602,10 @@ namespace supercloud{
 					Peer::ComputerIdSetter::setComputerId(*peer, dist_cid);
 				}
 				// remove the message sent: as it's now validated we don't need it anymore
-				if (this->m_pid_2_emitted_msg.find(peer->getPeerId()) != this->m_pid_2_emitted_msg.end())
-					this->m_pid_2_emitted_msg.erase(peer->getPeerId());
+				//note: don't remove the m_pid_2_emitted_msg yet, as you may receive a late receiveIdentity
+				//FIXME: before, it was get->send->send. now it's get->send & get->send
+				//if (this->m_pid_2_emitted_msg.find(peer->getPeerId()) != this->m_pid_2_emitted_msg.end())
+				//	this->m_pid_2_emitted_msg.erase(peer->getPeerId());
 				requestSave();
 				//OK, now request a aes key
 
@@ -647,25 +643,10 @@ namespace supercloud{
 
 	void IdentityManager::requestSave() {
 		// save the current state into the file.
-		if (clusterId  || getComputerId() == NO_COMPUTER_ID) return; //don't save if we are not registered on the server yet.
-		// get synch
+		if (clusterId || getComputerId() == NO_COMPUTER_ID) return; //don't save if we are not registered on the server yet.
 		{ std::lock_guard<std::mutex> lock(this->save_mutex);
-			std::filesystem::path fic(filepath);
-			std::filesystem::path ficBak = fic;
-			std::filesystem::path ficTemp(filepath);
-			ficTemp .replace_filename(ficTemp.filename().string()+std::string("_1"));
-			// create an other file
-			save(ficTemp);
-			// remove first file
-			ficBak.replace_filename(ficBak.filename().string() + ".bak");
-			bool exists = std::filesystem::exists(fic);
-			bool exists_bak = std::filesystem::exists(ficBak);
-			if (exists_bak) std::filesystem::remove(ficBak);
-			if (exists) std::filesystem::rename(fic, ficBak);
-			// rename file
-			std::filesystem::rename(ficTemp, fic);
+			m_parameters->save();
 		}
-
 	}
 
 
@@ -826,7 +807,7 @@ namespace supercloud{
 		}
 	}
 
-	bool IdentityManager::receiveAesKey(PeerPtr peer, ByteBuff& message) {
+	bool IdentityManager::receiveAesKey(PeerPtr peer, const ByteBuff& message) {
 		log(std::to_string(serv.getPeerId() % 100) + " (receiveAesKey) receive SEND_SERVER_AES_KEY" + " from " + peer->getPeerId() % 100+"\n");
 		//check if i'm able to do this
 		assert(m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end());

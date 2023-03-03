@@ -4,8 +4,9 @@ add_executable(${_TEST_NAME}_tests
     test_connection.cpp
     test_connection_fake_network.cpp
     test_connection_messages.cpp
-    FakeNetwork.hpp
-    FakeNetwork.cpp
+    ../WaitConnection.hpp
+    ../FakeNetwork.hpp
+    ../FakeNetwork.cpp
     )
 
     

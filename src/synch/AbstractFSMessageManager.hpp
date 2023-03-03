@@ -4,7 +4,10 @@
 
 namespace supercloud {
 
+	//we need the 30-50 section of message types
+	// 0-29 is reserved by network package.
 	enum class SynchMessagetype : uint8_t {
+		ENUM_START = 29,
 		// request the last commit for some computers (or all).
 		GET_STATE,
 		// send the last commit known for a computer.

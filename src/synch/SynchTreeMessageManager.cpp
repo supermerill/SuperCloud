@@ -24,7 +24,7 @@ namespace supercloud {
 		m_cluster_manager->registerListener(*UnnencryptedMessageType::TIMER_MINUTE, this->ptr()); //TODO
 	}
 
-	void SynchTreeMessageManager::receiveMessage(PeerPtr sender, uint8_t message_id, ByteBuff message) {
+	void SynchTreeMessageManager::receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) {
 		if (sender->getComputerId() == 0 || sender->getComputerId() == NO_COMPUTER_ID) {
 			//error: not a estabished peer
 			error(std::string("Error, peer ") + std::to_string(sender->getPeerId() % 100) + " ask us a chunk and he doens't have a computerid !");
@@ -59,7 +59,7 @@ namespace supercloud {
 		return buff;
 	}
 
-	SynchTreeMessageManager::TreeRequest SynchTreeMessageManager::readTreeRequestMessage(ByteBuff& buffer) {
+	SynchTreeMessageManager::TreeRequest SynchTreeMessageManager::readTreeRequestMessage(const ByteBuff& buffer) {
 		TreeRequest request;
 		request.depth = buffer.getSize();
 		request.last_commit_received = buffer.getULong();
@@ -121,7 +121,7 @@ namespace supercloud {
 		}
 		return buffer;
 	}
-	SynchTreeMessageManager::TreeAnswer SynchTreeMessageManager::readTreeAnswerMessage(ByteBuff& buffer) {
+	SynchTreeMessageManager::TreeAnswer SynchTreeMessageManager::readTreeAnswerMessage(const ByteBuff& buffer) {
 		TreeAnswer answer;
 		answer.from = buffer.deserializeComputerId();
 		answer.answer_time = buffer.getLong();

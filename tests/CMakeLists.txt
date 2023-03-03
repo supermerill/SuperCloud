@@ -25,3 +25,5 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 add_subdirectory(network)
 add_subdirectory(others)
+add_subdirectory(fs)
+add_subdirectory(synch)

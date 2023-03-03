@@ -8,16 +8,22 @@
 
 namespace supercloud {
 
+	/// <summary>
+	/// a unit8_t vector, but with easier way to read/write into/from it.
+	/// 
+	/// note: const mean it can't be written, but you can still change the current position.
+	/// The right way should be to create an iterator(or a view) to avoid sharing that mutable position, but it's working as-is for now. Just don't share one between threads.
+	/// </summary>
 	class ByteBuff
 	{
 	protected:
 		//private static final Charset UTF8 = Charset.forName("UTF-8");
-		size_t m_position = 0;
+		mutable size_t m_position = 0;
 		size_t m_limit = 0;
 		std::unique_ptr<uint8_t[]> m_buffer;
 		size_t m_length = 0;
 
-		void readcheck(const size_t size)
+		void readcheck(const size_t size) const
 		{
 			if (m_limit < m_position + size)
 			{
@@ -81,6 +87,14 @@ namespace supercloud {
 		virtual ~ByteBuff() {}
 
 
+		bool operator==(const ByteBuff& other) const {
+			bool ok = m_position == other.m_position && m_limit == other.m_limit;
+			for (int i = 0; i < m_limit && ok; i++) {
+				ok = m_buffer[i] == other.m_buffer[i];
+			}
+			return ok;
+		}
+
 		/**
 		 * Set limit to at least position() + size.
 		 * Shouldn't be called/used directly. But sometimes i try to re-create this so here it is, available.
@@ -120,12 +134,13 @@ namespace supercloud {
 		ByteBuff& flip();
 
 		ByteBuff& rewind();
+		const ByteBuff& rewind() const;
 
-		uint8_t get();
+		uint8_t get() const;
 		ByteBuff& put(const uint8_t b);
 
-		std::vector<uint8_t> get(const size_t nbElt);
-		std::vector<uint8_t> getAll();
+		std::vector<uint8_t> get(const size_t nbElt) const;
+		std::vector<uint8_t> getAll() const;
 		ByteBuff& put(std::vector<uint8_t>);
 
 		/**
@@ -137,7 +152,7 @@ namespace supercloud {
 		 */
 		ByteBuff& put(const uint8_t* src, size_t length);
 		ByteBuff& put(const uint8_t* src, const size_t srcPos, const size_t length);
-		ByteBuff& get(uint8_t* dest, const size_t destPos, const size_t length);
+		const ByteBuff& get(uint8_t* dest, const size_t destPos, const size_t length) const;
 
 		/**
 		 * Copy the scr.limit-src.position uint8_ts from src.position to src.limit into this.position.
@@ -146,7 +161,7 @@ namespace supercloud {
 		 */
 		ByteBuff& put(ByteBuff& src);
 		ByteBuff& put(ByteBuff& src, size_t size);
-		ByteBuff& get(ByteBuff& dest, size_t size);
+		const ByteBuff& get(ByteBuff& dest, size_t size) const;
 
 		/**
 		 * Getter to the raw array sed to store data between 0 and limit.
@@ -159,41 +174,41 @@ namespace supercloud {
 		//wchar getWChar();
 		//ByteBuff& putWChar(const wchar value);
 
-		int16_t getShort();
+		int16_t getShort() const;
 		ByteBuff& putShort(const int16_t value);
 
-		uint16_t getUShort();
+		uint16_t getUShort() const;
 		ByteBuff& putUShort(const uint16_t value);
 
+		int32_t getTrailInt() const;
 		ByteBuff& putTrailInt(const int32_t num);
-		int32_t getTrailInt();
 
-		int32_t getInt();
+		int32_t getInt() const;
 		ByteBuff& putInt(const int32_t value);
 
-		uint32_t getUInt() { return uint32_t(getInt()); }
+		uint32_t getUInt() const { return uint32_t(getInt()); }
 		ByteBuff& putUInt(const uint32_t value) { return putInt(int32_t(value)); }
 
-		int64_t getLong();
+		int64_t getLong() const;
 		ByteBuff& putLong(const int64_t value);
 
-		uint64_t getULong() { return uint64_t(getLong()); }
+		uint64_t getULong() const { return uint64_t(getLong()); }
 		ByteBuff& putULong(const uint64_t value) { return putLong(int64_t(value)); }
 
+		size_t getSize() const;
 		ByteBuff& putSize(const size_t num);
-		size_t getSize();
 
-		float getFloat();
+		float getFloat() const;
 		ByteBuff& putFloat(const float value);
 
-		double getDouble();
+		double getDouble() const;
 		ByteBuff& putDouble(const double value);
 
+		std::string getUTF8() const;
 		ByteBuff& putUTF8(const std::string str);
-		std::string getUTF8();
 
+		std::string getShortUTF8() const;
 		ByteBuff& putShortUTF8(const std::string str);
-		std::string getShortUTF8();
 
 		/**
 		 * Create a uint8_tBuff with other position and limit. The new values will be <= current
@@ -205,7 +220,7 @@ namespace supercloud {
 		 *            Set the new limit to position + length
 		 * @return A ByteBuff with its own buffer and another position and limit.
 		 */
-		ByteBuff subBuff(const size_t start, const size_t length);
+		ByteBuff subBuff(const size_t start, const size_t length) const;
 
 		/**
 		 * Clear it. pos and limit are now at 0.
@@ -244,12 +259,12 @@ namespace supercloud {
 		 * @return
 		 * @throws IOException
 		 */
-		ByteBuff& write(std::ostream& out, size_t nbBytes);
+		const ByteBuff& write(std::ostream& out, size_t nbBytes) const;
 
 		/**
 		 * @throws IOException
 		 */
-		ByteBuff& write(std::ostream& out);
+		const ByteBuff& write(std::ostream& out) const;
 	};
 
 } // namespace supercloud

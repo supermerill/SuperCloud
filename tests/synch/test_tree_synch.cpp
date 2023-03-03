@@ -1,7 +1,7 @@
 
 //#define CATCH_CONFIG_DISABLE
 
-#include <catch_main.hpp>
+#include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
 #include "utils/Utils.hpp"
 #include <filesystem>
@@ -11,7 +11,7 @@
 #include "network/PhysicalServer.hpp"
 #include "synch/SynchTreeMessageManager.hpp"
 
-namespace supercloud::test::inmemory {
+namespace supercloud::test::synchtree {
 
     typedef std::shared_ptr<SynchTreeMessageManager> MsgManaPtr;
 
@@ -19,7 +19,7 @@ namespace supercloud::test::inmemory {
         return FsElt::createId(rand_u16() % 1 == 0 ? FsType::FILE : FsType::DIRECTORY, rand_u63(), ComputerId(rand_u63()& COMPUTER_ID_MASK));
     }
 
-	SCENARIO("Test SynchTreeMessage") {
+	SCENARIO("Test SynchTreeMessageManager message write/read") {
 
         std::shared_ptr<PhysicalServer> serv = PhysicalServer::createForTests();
         ServerConnectionState m_state;

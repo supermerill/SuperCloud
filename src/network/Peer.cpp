@@ -256,8 +256,16 @@ namespace supercloud {
 		//}
 	}
 
+	std::mutex& Peer::lockSocketRead() const {
+		return socket_read_barrier;
+	}
+
 	void Peer::readMessage() {
 		if (!this->alive) { return; }
+#ifdef _DEBUG
+		//for tests
+		{ std::lock_guard lock_socket{ socket_read_barrier }; }
+#endif
 #ifdef SLOW_NETWORK_FOR_DEBUG
 		Sleep(100 + this->myServer.getPeerId() % 20 + rand_u8()%100);
 #endif
@@ -285,6 +293,10 @@ namespace supercloud {
 				}
 				if (!this->alive) { return; }
 			} while (nb5 < 4);
+#ifdef _DEBUG
+			//for tests
+			{ std::lock_guard lock_socket{ socket_read_barrier }; }
+#endif
 
 			// read messagetype
 			//log(std::to_string( this->myServer.getPeerId() % 100 ) << " read type socket: " << socket->is_open() << "\n";

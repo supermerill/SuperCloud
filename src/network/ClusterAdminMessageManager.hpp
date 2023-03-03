@@ -73,7 +73,7 @@ namespace supercloud {
         }
 
 
-        void receiveMessage(PeerPtr peer, uint8_t messageId, ByteBuff message) override;
+        void receiveMessage(PeerPtr peer, uint8_t messageId, const ByteBuff& message) override;
 
 
         // internal stuff. Public for testing
@@ -90,7 +90,7 @@ namespace supercloud {
         //void emitServerDatabase(Peer& sendTo, const std::vector<PeerPtr>& registered);
         std::vector<DataSendServerDatabaseItem> createSendServerDatabase(const std::vector<PeerPtr>& sendTo);
         ByteBuff createSendServerDatabaseMessage(const std::vector<DataSendServerDatabaseItem>& data);
-        std::vector<DataSendServerDatabaseItem> readSendServerDatabaseMessage(ByteBuff& msg);
+        std::vector<DataSendServerDatabaseItem> readSendServerDatabaseMessage(const ByteBuff& msg);
         // populate the identitymanager database
         // return peers that have a unknown private/public interface to try to connect to.
         std::vector<PeerPtr> useServerDatabaseMessage(PeerPtr& sender, std::vector<DataSendServerDatabaseItem> data);

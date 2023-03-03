@@ -1,12 +1,17 @@
 get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 
 add_executable(${_TEST_NAME}_tests
+    test_main.cpp
     test_tree_synch.cpp
     test_chunk_synch.cpp
+    ../FakeNetwork.hpp
+    ../FakeNetwork.cpp
 	)
 
     
 target_link_libraries(${_TEST_NAME}_tests test_common libsupercloud)
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE -DTEST_VISIBILITY=1)
+target_compile_options(${_TEST_NAME}_tests PRIVATE -DTEST_VISIBILITY2=1)
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 # catch_discover_tests(${_TEST_NAME}_tests TEST_PREFIX "${_TEST_NAME}: ")

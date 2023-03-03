@@ -38,7 +38,7 @@ namespace supercloud {
 	typedef std::vector<uint8_t> PrivateKey;
 	typedef std::vector<uint8_t> SecretKey;
 
-
+	// message type 0->29 are reserved for network
 	enum class UnnencryptedMessageType : uint8_t {
 		/// <summary>
 		/// nothing
@@ -142,7 +142,7 @@ namespace supercloud {
 	};
 	constexpr auto operator*(UnnencryptedMessageType emt) noexcept{return static_cast<uint8_t>(emt);}
 
-
+	// interface to let the connection manager manange the connection state, while it's still immutable for evryone else.
 	class ServerConnectionState {
 	protected:
 		size_t m_something_connecting = 0;
@@ -207,7 +207,7 @@ namespace supercloud {
 
 	class AbstractMessageManager {
 	public:
-		virtual void receiveMessage(PeerPtr sender, uint8_t messageId, ByteBuff message) = 0;
+		virtual void receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) = 0;
 	};
 
 	class ClusterManager {
@@ -236,8 +236,9 @@ namespace supercloud {
 		 * @param messageRet
 		 * @return true if the message should be emitted (no guaranty)
 		 */
-		//virtual bool writeMessage(int64_t peerId, uint8_t messageType, ByteBuff& message) = 0;
-		virtual void registerListener(uint8_t getDir, std::shared_ptr<AbstractMessageManager> propagateChange) = 0;
+		//virtual bool writeMessage(int64_t peerId, uint8_t messageType, const ByteBuff& message) = 0;
+		virtual void registerListener(uint8_t message_id, std::shared_ptr<AbstractMessageManager> listener) = 0;
+		virtual void unregisterListener(uint8_t message_id, std::shared_ptr<AbstractMessageManager> listener) = 0;
 		virtual void init(uint16_t listenPort) = 0;
 
 		/**

@@ -14,7 +14,7 @@ namespace supercloud{
         clusterManager.registerListener(*UnnencryptedMessageType::SEND_SERVER_DATABASE, this->ptr());
     }
 
-    void ClusterAdminMessageManager::receiveMessage(PeerPtr sender, uint8_t messageId, ByteBuff message) {
+    void ClusterAdminMessageManager::receiveMessage(PeerPtr sender, uint8_t messageId, const ByteBuff& message) {
         //log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ClusterAdminMessageManager) receive message "+ messageId+" : "+ messageId_to_string(messageId));
         // answer to deletion
         if (!sender->isAlive()) {
@@ -294,7 +294,8 @@ namespace supercloud{
                     continue;
                 } else {
                     bool modified = false;
-                    if (!peer_data.private_interface) {
+                    // if no private interface, set the last good known one.
+                    if (!peer_data.private_interface && it->last_private_interface) {
                         modified = true;
                         log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) 
                             + " (ClusterAdminMessageManager) create private interface with '"+ it->last_private_interface->first + ":" + it->last_private_interface->second);
@@ -452,7 +453,7 @@ namespace supercloud{
         return buff;
     }
 
-    std::vector<ClusterAdminMessageManager::DataSendServerDatabaseItem> ClusterAdminMessageManager::readSendServerDatabaseMessage(ByteBuff& buff) {
+    std::vector<ClusterAdminMessageManager::DataSendServerDatabaseItem> ClusterAdminMessageManager::readSendServerDatabaseMessage(const ByteBuff& buff) {
         std::vector<ClusterAdminMessageManager::DataSendServerDatabaseItem> ret_list;
 
         std::mutex useServerDatabaseMessage_mutex;

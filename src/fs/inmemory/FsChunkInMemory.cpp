@@ -26,7 +26,7 @@ namespace supercloud {
 		if (!m_is_local) {
 			throw std::exception("error, cannot read a chunk not local");
 		}
-		if (offset + size < m_buffer.size()) {
+		if (offset + size <= m_buffer.size()) {
 			to_append.put(m_buffer.data() + offset, size);
 			return true;
 		}
@@ -40,7 +40,6 @@ namespace supercloud {
 		ByteBuff buffer;
 		buffer.put(((FsChunkInMemory*)&chunk)->m_buffer);
 		return buffer.flip();
-
 	}
 
 	bool FsChunkInMemory::write(ByteBuff& to_write, size_t offset, size_t size) {

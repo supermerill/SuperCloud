@@ -89,7 +89,7 @@ namespace supercloud{
         status[peer].current = std::max(status[peer].current, new_status);
     }
 
-    void ConnectionMessageManager::receiveMessage(PeerPtr sender, uint8_t messageId, ByteBuff message) {
+    void ConnectionMessageManager::receiveMessage(PeerPtr sender, uint8_t messageId, const ByteBuff& message) {
         log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive message " + messageId + " : " + messageId_to_string(messageId) + "(ConnectionMessageManager)");
         // answer to deletion
         if (!sender->isAlive() || messageId == *UnnencryptedMessageType::CONNECTION_CLOSED) {
@@ -326,6 +326,17 @@ namespace supercloud{
                 //update the clusterManager connection status (track the connection of our computer to the network)
                 // clusterManager.state.finishConnection(sender->getComputerId())
                 this->m_connection_state.finishConnection(sender->getComputerId());
+                { // also set us to connected status
+                    PeerPtr me = clusterManager->getIdentityManager().getSelfPeer();
+                    std::lock_guard lock{ me->synchronize() };
+                    Peer::ConnectionState state = me->getState();
+                    assert(state & Peer::ConnectionState::US);
+                    if (!(state & Peer::ConnectionState::CONNECTED)) {
+                        //from connecting to connected
+                        state = (state & ~Peer::ConnectionState::CONNECTING) | Peer::ConnectionState::CONNECTED;
+                        me->setState(state);
+                    }
+                }
 
                 //find if this peer isn't already loaded
                 clusterManager->getIdentityManager().fusionWithConnectedPeer(sender);
@@ -525,7 +536,7 @@ namespace supercloud{
         }
     }
 
-    ConnectionMessageManager::Data_SEND_SERVER_LIST ConnectionMessageManager::get_SEND_SERVER_LIST_msg(ByteBuff& message) {
+    ConnectionMessageManager::Data_SEND_SERVER_LIST ConnectionMessageManager::get_SEND_SERVER_LIST_msg(const ByteBuff& message) {
         Data_SEND_SERVER_LIST data;
         // == the connected pid->cid  ==
         size_t nb = message.getSize();
@@ -659,7 +670,7 @@ namespace supercloud{
         buff.putInt(data.port);
         return buff.flip();
     }
-    ConnectionMessageManager::Data_SEND_SERVER_ID ConnectionMessageManager::get_SEND_SERVER_ID_msg(ByteBuff& message) {
+    ConnectionMessageManager::Data_SEND_SERVER_ID ConnectionMessageManager::get_SEND_SERVER_ID_msg(const ByteBuff& message) {
         Data_SEND_SERVER_ID data;
         // his peer id
         data.peer_id = message.deserializePeerId();

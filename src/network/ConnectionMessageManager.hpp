@@ -115,16 +115,16 @@ namespace supercloud {
 
         void requestCurrentStep(PeerPtr sender, bool enforce);
 
-        void receiveMessage(PeerPtr peer, uint8_t messageId, ByteBuff message) override;
+        void receiveMessage(PeerPtr peer, uint8_t messageId, const ByteBuff& message) override;
 
 
      //only for tests, should be protected
         ByteBuff create_SEND_SERVER_ID_msg(Data_SEND_SERVER_ID& data);
-        Data_SEND_SERVER_ID get_SEND_SERVER_ID_msg(ByteBuff& msg);
+        Data_SEND_SERVER_ID get_SEND_SERVER_ID_msg(const ByteBuff& msg);
 
         Data_SEND_SERVER_LIST create_Data_SEND_SERVER_LIST(PeerPtr other);
         ByteBuff create_SEND_SERVER_LIST_msg(Data_SEND_SERVER_LIST& data);
-        Data_SEND_SERVER_LIST get_SEND_SERVER_LIST_msg(ByteBuff& msg);
+        Data_SEND_SERVER_LIST get_SEND_SERVER_LIST_msg(const ByteBuff& msg);
 
     };
 } // namespace supercloud

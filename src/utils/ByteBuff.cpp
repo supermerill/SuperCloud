@@ -72,8 +72,13 @@ ByteBuff& ByteBuff::rewind()
     this->m_position = 0;
     return *this;
 }
+const ByteBuff& ByteBuff::rewind() const
+{
+    this->m_position = 0;
+    return *this;
+}
 
-uint8_t ByteBuff::get()
+uint8_t ByteBuff::get() const
 {
     readcheck(1);
     // return this->m_buffer[this->m_position] then incrementing this->m_position
@@ -87,7 +92,7 @@ ByteBuff& ByteBuff::put(const uint8_t b)
     return *this;
 }
 
-std::vector<uint8_t> ByteBuff::get(const size_t nbElt)
+std::vector<uint8_t> ByteBuff::get(const size_t nbElt) const
 {
     readcheck(nbElt);
     std::vector<uint8_t> newBuff(nbElt);
@@ -97,7 +102,8 @@ std::vector<uint8_t> ByteBuff::get(const size_t nbElt)
     return newBuff;
 }
 
-std::vector<uint8_t> ByteBuff::getAll() {
+std::vector<uint8_t> ByteBuff::getAll() const
+{
     return ByteBuff::get(this->m_limit - this->m_position);
 }
 
@@ -117,7 +123,7 @@ ByteBuff& ByteBuff::put(std::vector<uint8_t> src)
  * @param length nb uint8_ts to copy
  * @return *this
  */
-ByteBuff& ByteBuff::get(uint8_t* dest, const size_t destPos, const size_t length)
+const ByteBuff& ByteBuff::get(uint8_t* dest, const size_t destPos, const size_t length) const
 {
     readcheck(length);
     std::copy(this->m_buffer.get() + this->m_position, this->m_buffer.get() + this->m_position + length, dest + destPos);
@@ -162,7 +168,8 @@ ByteBuff& ByteBuff::put(ByteBuff& src, size_t size)
     src.m_position += size;
     return *this;
 }
-ByteBuff& ByteBuff::get(ByteBuff& dest, size_t size) {
+const ByteBuff& ByteBuff::get(ByteBuff& dest, size_t size) const
+{
     readcheck(size);
     dest.expand(size);
     std::copy(m_buffer.get() + m_position, m_buffer.get() + m_position + size, dest.m_buffer.get() + dest.m_position);
@@ -222,7 +229,7 @@ const uint8_t* ByteBuff::raw_array() const
 //    return putShort((short)value);
 //}
 
-int16_t ByteBuff::getShort()
+int16_t ByteBuff::getShort() const
 {
     this->readcheck(2);
     const short sh = (int16_t)((this->m_buffer[this->m_position++] & 0xFF) << 8 | this->m_buffer[this->m_position++] & 0xFF);
@@ -237,7 +244,7 @@ ByteBuff& ByteBuff::putShort(const int16_t value)
     return *this;
 }
 
-uint16_t ByteBuff::getUShort()
+uint16_t ByteBuff::getUShort() const
 {
     this->readcheck(2);
     const short sh = uint16_t((this->m_buffer[this->m_position++] & 0xFF) << 8 | this->m_buffer[this->m_position++] & 0xFF);
@@ -326,7 +333,7 @@ ByteBuff& ByteBuff::putTrailInt(const int32_t num)
     return *this;
 }
 
-int32_t ByteBuff::getTrailInt()
+int32_t ByteBuff::getTrailInt() const
 {
     readcheck(1);
     const uint8_t b = this->m_buffer[this->m_position++];
@@ -368,20 +375,8 @@ int32_t ByteBuff::getTrailInt()
 
 }
 
-ByteBuff& ByteBuff::putSize(const size_t num) {
-    //does it have less than 29 significant bits? (can't be negative as it's unsigned)
-    if ( (num>>28) == 0) {
-        //use trail int
-        return putTrailInt(int32_t(num));
-    } else {
-        //use putULong after the marker byte.
-        put(uint8_t(0xFF));
-        putULong(num);
-        return *this;
-    }
-}
-size_t ByteBuff::getSize() {
-
+size_t ByteBuff::getSize() const
+{
     readcheck(1);
     const uint8_t b = this->m_buffer[this->m_position];
     if ((b & 0xFF) == 0xFF) {
@@ -395,7 +390,21 @@ size_t ByteBuff::getSize() {
 
 }
 
-int32_t ByteBuff::getInt()
+ByteBuff& ByteBuff::putSize(const size_t num)
+{
+    //does it have less than 29 significant bits? (can't be negative as it's unsigned)
+    if ( (num>>28) == 0) {
+        //use trail int
+        return putTrailInt(int32_t(num));
+    } else {
+        //use putULong after the marker byte.
+        put(uint8_t(0xFF));
+        putULong(num);
+        return *this;
+    }
+}
+
+int32_t ByteBuff::getInt() const
 {
     readcheck(4);
     return (this->m_buffer[this->m_position++] & 0xFF) << 24
@@ -415,7 +424,7 @@ ByteBuff& ByteBuff::putInt(const int32_t value)
 }
 
 
-int64_t ByteBuff::getLong()
+int64_t ByteBuff::getLong() const
 {
     readcheck(8);
     //int64_t val = int64_t(this->m_buffer[this->m_position++] & 0xFFL) << 56
@@ -476,7 +485,7 @@ ByteBuff& ByteBuff::putLong(const int64_t value)
     return *this;
 }
 
-float ByteBuff::getFloat()
+float ByteBuff::getFloat() const
 {
     //return Float.int32_tBitsToFloat(getInt());
     int32_t fl = getInt();
@@ -490,7 +499,7 @@ ByteBuff& ByteBuff::putFloat(const float value)
     return *this;
 }
 
-double ByteBuff::getDouble()
+double ByteBuff::getDouble() const
 {
     //return Double.longBitsToDouble(getLong());
     int64_t fl = getLong();
@@ -512,7 +521,7 @@ ByteBuff& ByteBuff::putUTF8(const std::string str)
     return *this;
 }
 
-std::string ByteBuff::getUTF8()
+std::string ByteBuff::getUTF8() const
 {
     const size_t size = getSize();
     readcheck(size);
@@ -529,7 +538,7 @@ ByteBuff& ByteBuff::putShortUTF8(const std::string str)
     return *this;
 }
 
-std::string ByteBuff::getShortUTF8()
+std::string ByteBuff::getShortUTF8() const
 {
     const int16_t size = getShort();
     readcheck(size);
@@ -560,7 +569,7 @@ std::string ByteBuff::getShortUTF8()
 //    retVal.m_limit = Math.min(this.limit, start + length);
 //    return retVal;
 //}
-ByteBuff ByteBuff::subBuff(const size_t start, const size_t length) {
+ByteBuff ByteBuff::subBuff(const size_t start, const size_t length) const {
     assert(start + length < limit());
     ByteBuff retVal(length);
     std::copy(this->m_buffer.get() + start, this->m_buffer.get() + start + length, retVal.m_buffer.get());
@@ -625,7 +634,7 @@ ByteBuff& ByteBuff::read(std::istream& in) {
  * @return
  * @throws IOException
  */
-ByteBuff& ByteBuff::write(std::ostream& out, size_t nbBytes) {
+const ByteBuff& ByteBuff::write(std::ostream& out, size_t nbBytes) const {
     readcheck(nbBytes);
     //out.write(this->m_buffer, this->m_position, nbBytes);
     out.write((char*)this->m_buffer.get() + this->m_position, nbBytes);
@@ -633,7 +642,7 @@ ByteBuff& ByteBuff::write(std::ostream& out, size_t nbBytes) {
     return *this;
 }
 
-ByteBuff& ByteBuff::write(std::ostream& out) {
+const ByteBuff& ByteBuff::write(std::ostream& out) const {
     readcheck(limit() - this->m_position);
     out.write((char*)this->m_buffer.get() + this->m_position, limit() - this->m_position);
     this->m_position = this->m_limit;

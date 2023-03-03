@@ -8,6 +8,7 @@
 
 #include "../utils/ByteBuff.hpp"
 #include "../utils/Utils.hpp"
+#include "../utils/Parameters.hpp"
 #include "ClusterManager.hpp"
 #include "NetworkAdapter.hpp"
 
@@ -95,7 +96,7 @@ namespace supercloud {
         }
 
         //factory
-        [[nodiscard]] static std::shared_ptr<PhysicalServer> createAndInit(const std::filesystem::path& folderPath);
+        [[nodiscard]] static std::shared_ptr<PhysicalServer> createAndInit(std::unique_ptr<Parameters>&& identity_parameters, std::shared_ptr<Parameters> install_parameters = {});
 
         std::shared_ptr<PhysicalServer> ptr() {
             return shared_from_this();
@@ -193,7 +194,7 @@ namespace supercloud {
         /// The thread will be taken by the listeners for an unknown amount of time.
         /// </summary>
         /// <returns></returns>
-        void propagateMessage(PeerPtr sender, uint8_t messageId, ByteBuff& message);
+        void propagateMessage(PeerPtr sender, uint8_t messageId, const ByteBuff& message);
 
 
         IdentityManager& getIdentityManager() override;
