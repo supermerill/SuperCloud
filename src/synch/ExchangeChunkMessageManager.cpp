@@ -30,30 +30,30 @@ namespace supercloud {
             return;
         }
         if (messageId == *SynchMessagetype::GET_CHUNK_AVAILABILITY) {
-            log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE GET_CHUNK_AVAILABILITY from " + sender->getPeerId());
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) RECEIVE GET_CHUNK_AVAILABILITY from " + (sender->getPeerId()%100));
             ChunkAvailabilityRequest request = readChunkAvailabilityRequest(message);
             ChunkAvailabilityAnswer answer = createChunkAvailabilityAnswer(request);
             sender->writeMessage(*SynchMessagetype::SEND_CHUNK_AVAILABILITY, writeChunkAvailabilityAnswer(answer));
         } else if (messageId == *SynchMessagetype::SEND_CHUNK_AVAILABILITY) {
-            log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_CHUNK_AVAILABILITY from " + sender->getPeerId());
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) RECEIVE SEND_CHUNK_AVAILABILITY from " + (sender->getPeerId()%100));
             ChunkAvailabilityAnswer result = readChunkAvailabilityAnswer(message);
             //update our availability
             this->useChunkAvailabilityAnswer(sender, result);
         } else if (messageId == *SynchMessagetype::GET_CHUNK_REACHABLE) {
-            log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE GET_CHUNK_REACHABLE from " + sender->getPeerId());
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) RECEIVE GET_CHUNK_REACHABLE from " + (sender->getPeerId()%100));
             ChunkReachableRequest request = readChunkReachableRequest(message);
             this->answerChunkReachableRequest(sender, request);
         } else if (messageId == *SynchMessagetype::SEND_CHUNK_REACHABLE) {
-            log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_CHUNK_REACHABLE from " + sender->getPeerId());
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) RECEIVE SEND_CHUNK_REACHABLE from " + (sender->getPeerId()%100));
             ChunkReachableAnswer result = readChunkReachableAnswer(message);
             //update our path & call callbacks
             this->useChunkReachableAnswer(sender, result);
         } else if (messageId == *SynchMessagetype::GET_SINGLE_CHUNK) {
-            log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE GET_CHUNK from " + sender->getPeerId());
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) RECEIVE GET_CHUNK from " + (sender->getPeerId()%100));
             SingleChunkRequest request = readSingleChunkRequest(message);
             this->answerSingleChunkRequest(sender, request);
         } else if (messageId == *SynchMessagetype::SEND_SINGLE_CHUNK) {
-            log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_CHUNK from " + sender->getPeerId());
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) RECEIVE SEND_CHUNK from " + (sender->getPeerId()%100));
             SingleChunkAnswer result = readSingleChunkAnswer(message);
             //update our fs & call callbacks
             this->useSingleChunkAnswer(sender, result);
@@ -265,8 +265,10 @@ namespace supercloud {
         buff.putSize(answer.paths.size());
         for (const auto& fsid_2_compid : answer.paths) {
             buff.putULong(fsid_2_compid.first);
-            buff.serializeComputerId(fsid_2_compid.second.cid);
-            buff.put(fsid_2_compid.second.hops);
+            buff.putSize(fsid_2_compid.second.path.size());
+            for (const ComputerId& path_ids : fsid_2_compid.second.path) {
+                buff.serializeComputerId(path_ids);
+            }
             buff.put(fsid_2_compid.second.difficulty);
         }
         return buff.flip();
@@ -277,8 +279,10 @@ namespace supercloud {
         const size_t nb_items = buffer.getSize();
         for (size_t i = 0; i < nb_items; ++i) {
             ChunkReachablePath& path = answer.paths[buffer.getULong()];
-            path.cid = buffer.deserializeComputerId();
-            path.hops = buffer.get();
+            const size_t nb_cid = buffer.getSize();
+            for (size_t j = 0; j < nb_cid; ++j) {
+                path.path.push_back(buffer.deserializeComputerId());
+            }
             path.difficulty = buffer.get();
         }
         assert(buffer.available() == 0);
@@ -295,13 +299,16 @@ namespace supercloud {
             } else {
                 if (reachable_it->second.finished) {
                     //finished, emit our answer
+                    log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: send angain ");
                     sender->writeMessage(*SynchMessagetype::SEND_CHUNK_REACHABLE, writeChunkReachableAnswer(reachable_it->second.our_answer));
                 } else {
                     // already in progress, don't re-emit it.
                     //add the peer in the list, so we can answer him.
+                    log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: in compute, add to sender list");
                     reachable_it->second.requester.push_back(sender);
                 }
                 // don't rebuild a new anwser, stop here.
+                log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: already sent ");
                 return;
             }
         }
@@ -332,16 +339,24 @@ namespace supercloud {
             answer.chunk_or_file_id_request = request.chunk_or_file_id;
             for (const FsID& id : local) {
                 ChunkReachablePath& path = answer.paths[id];
-                path.cid = m_cluster_manager->getComputerId();
-                path.hops = 0;
+                path.path = { m_cluster_manager->getComputerId() };
                 path.difficulty = 50; //TODO
             }
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: send direct result ");
             sender->writeMessage(*SynchMessagetype::SEND_CHUNK_REACHABLE, writeChunkReachableAnswer(answer));
         } else {
             //get all connected peers
             PeerList peers = m_cluster_manager->getPeersCopy();
             //remove our sender
-            foreach(it, peers) { if (it->get() == sender.get()) it.erase(); }
+            foreach(it, peers) {
+                if (it->get() == sender.get() || !(*it)->isConnected()) 
+                {
+                    log(std::to_string((*it)->getPeerId()%100) + " erase == "+ std::to_string(sender->getPeerId()%100));
+                    it.erase(); 
+                } else {
+                    log(std::to_string((*it)->getPeerId() % 100) + " keep (!= " + std::to_string(sender->getPeerId() % 100));
+                }
+            }
             //is there enough peers?
             if (peers.empty()) {
                 ChunkReachableAnswer answer;
@@ -351,19 +366,21 @@ namespace supercloud {
                 for (const FsID& id : local) {
                     if (m_filesystem->hasLocally(id)) {
                         ChunkReachablePath& path = answer.paths[id];
-                        path.cid = m_cluster_manager->getComputerId();
-                        path.hops = 0;
+                        path.path = { m_cluster_manager->getComputerId() };
                         path.difficulty = 50; //TODO
                     }
                 }
+                log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: send direct file result ");
                 sender->writeMessage(*SynchMessagetype::SEND_CHUNK_REACHABLE, writeChunkReachableAnswer(answer));
             } else {
+                log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: I don't have, have to ask others ");
                 //write the request
                 WaitingReachableRequest& saved_flood_request = registerChunkReachableRequest(request.chunk_or_file_id);
                 saved_flood_request.requester.push_back(sender);
                 //ask for the others
                 for (PeerPtr& peer : peers) {
-                    sender->writeMessage(*SynchMessagetype::GET_CHUNK_REACHABLE, writeChunkReachableRequest(request));
+                    log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: ask "+std::to_string(peer->getPeerId()%100));
+                    peer->writeMessage(*SynchMessagetype::GET_CHUNK_REACHABLE, writeChunkReachableRequest(request));
                     saved_flood_request.sent_to.push_back(peer);
                 }
             }
@@ -373,8 +390,10 @@ namespace supercloud {
 
     void ExchangeChunkMessageManager::useChunkReachableAnswer(PeerPtr sender, const ChunkReachableAnswer& answer) {
         std::lock_guard lock{ m_reachable_requests_mutex };
+        log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) useChunkReachableAnswer");
         //get the request (if not, ignore)
         if (auto our_answer_it = m_reachable_requests.find(answer.chunk_or_file_id_request); our_answer_it != m_reachable_requests.end()) {
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) add result to our request");
             //add the answer to our answer
             ChunkReachableAnswer& our_answer = our_answer_it->second.our_answer;
             ChunkReachablePath* path;
@@ -383,13 +402,13 @@ namespace supercloud {
                 if (our_path_it == our_answer.paths.end()) {
                     path = &our_answer.paths[fsid_2_path.first];
                     *path = fsid_2_path.second;
-                } else if (our_path_it->second.hops > fsid_2_path.second.hops ||
-                    (our_path_it->second.hops == fsid_2_path.second.hops && our_path_it->second.difficulty > fsid_2_path.second.difficulty)) {
+                } else if (our_path_it->second.path.size() > fsid_2_path.second.path.size() ||
+                    (our_path_it->second.path.size() == fsid_2_path.second.path.size() && our_path_it->second.difficulty > fsid_2_path.second.difficulty)) {
                     path = &our_path_it->second;
                     *path = fsid_2_path.second;
                 }
                 //add us as gateway
-                path->hops++;
+                path->path.push_back(m_cluster_manager->getComputerId());
                 path->difficulty += 10; //TODO
             }
             //remove the sender peer from the waiting list
@@ -399,21 +418,23 @@ namespace supercloud {
                 //update the best path of our availability repo
                 for (const auto& fsid_2_path : our_answer.paths) {
                     // if not local availability
-                    if (fsid_2_path.second.hops > 0) {
+                    if (fsid_2_path.second.path.size() > 0) {
                         const Availability& our_avail = m_syncro->getAvailability(fsid_2_path.first);
-                        if (our_avail.current_best_path != fsid_2_path.second.cid) {
+                        if (our_avail.current_best_path != fsid_2_path.second.path.back()) {
                             Availability modified_avail = our_avail;
-                            modified_avail.current_best_path = fsid_2_path.second.cid;
+                            modified_avail.current_best_path = fsid_2_path.second.path.back();
                             m_syncro->setAvailabilityMetadata(fsid_2_path.first, modified_avail);
                         }
                     }
                 }
                 our_answer_it->second.finished = true;
                 //emit the anwser to the requesters.
+                log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) emit answer to requesters: "+std::to_string(our_answer_it->second.requester.size()));
                 for (PeerPtr& requester : our_answer_it->second.requester) {
                     requester->writeMessage(*SynchMessagetype::SEND_CHUNK_REACHABLE, writeChunkReachableAnswer(our_answer_it->second.our_answer));
                 }
                 //call the callbacks
+                log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) emit answer to callbacks: " + std::to_string(our_answer_it->second.callbacks.size()));
                 foreach(callback_it, our_answer_it->second.callbacks) {
                     callback_it.get()(our_answer_it->second.our_answer);
                     callback_it.erase();
@@ -421,6 +442,7 @@ namespace supercloud {
                 // let the request lie in memory for some time
             }
         } else {
+            log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) ERRROR");
             assert(false); // how?
         }
     }
@@ -575,9 +597,13 @@ namespace supercloud {
                             bool request_sent = false;
                             //if one path for our one chunk, then follow it
                             if (auto it = reach.paths.find(reach.chunk_or_file_id_request); it != reach.paths.end()) {
+                                if (it->second.path.back() == m_cluster_manager->getComputerId()) {
+                                    it->second.path.erase(it->second.path.end() - 1);
+                                }
                                 //get peer
                                 for (PeerPtr peer : m_cluster_manager->getPeersCopy()) {
-                                    if (peer->isConnected() && peer->getComputerId() == it->second.cid) {
+                                    //get the peer with the cid we can access (first hop of the path)
+                                    if (peer->isConnected() && peer->getComputerId() == it->second.path.back()) {
                                         peer->writeMessage(*SynchMessagetype::GET_SINGLE_CHUNK, writeSingleChunkRequest(createSingleChunkRequest(request.chunk_id, true)));
                                         saved_chunk_request.sent_to.push_back(peer);
                                         request_sent = true;

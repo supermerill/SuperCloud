@@ -4,6 +4,8 @@
 
 #include <algorithm>
 
+#define log //log
+
 namespace supercloud{
 
     void ClusterAdminMessageManager::register_listener() {

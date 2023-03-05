@@ -244,8 +244,8 @@ namespace supercloud {
 			if (encodedMsg != nullptr && message.position() != 0) {
 				msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
 			}
-			log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) 
-				+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.available())));
+			//log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) 
+				//+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.available())));
 
 			// update to buffer position, like if we've done all get()
 			message.position(message.limit());
@@ -313,7 +313,7 @@ namespace supercloud {
 				return;
 			}
 			uint8_t message_id = byte_read;
-			log(std::to_string(myServer.getPeerId() % 100) + " read message id :" + uint16_t(message_id) +" "+ messageId_to_string(message_id));
+			//log(std::to_string(myServer.getPeerId() % 100) + " read message id :" + uint16_t(message_id) +" "+ messageId_to_string(message_id));
 			if (size_read < 1) {
 				throw read_error("End of stream");
 			}
@@ -381,7 +381,7 @@ namespace supercloud {
 						return;
 					}
 				}//else : nothing to do, it's not encoded
-				log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " READ  MESSAGE " + int32_t(message_id)+" : " + messageId_to_string(message_id));
+				//log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " READ MESSAGE " + int32_t(message_id)+" : " + messageId_to_string(message_id));
 				//use message
 				if (message_id == *UnnencryptedMessageType::PRIORITY_CLEAR) {
 					message_id = buff_message.get();

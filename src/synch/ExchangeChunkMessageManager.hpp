@@ -48,10 +48,9 @@ namespace supercloud {
 			bool operator==(const ChunkReachableRequest& other) const { return chunk_or_file_id == other.chunk_or_file_id; }
 		};
 		struct ChunkReachablePath {
-			ComputerId cid; // who has it
-			uint8_t hops; // how many gateways
+			std::vector<ComputerId> path; // the path
 			uint8_t difficulty; // a difficulty estimate (0 = Gb/s with low latency and unused computer, 200: slow connention on a busy computer(s))
-			bool operator==(const ChunkReachablePath& other) const { return cid == other.cid && hops == other.hops && difficulty == other.difficulty; }
+			bool operator==(const ChunkReachablePath& other) const { return path == other.path && difficulty == other.difficulty; }
 		};
 		struct ChunkReachableAnswer {
 			FsID chunk_or_file_id_request; // the  request file/chunk
