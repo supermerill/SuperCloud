@@ -90,17 +90,17 @@ namespace supercloud {
 			//what we want as information (the FsID we don't know about)
 			std::vector<FsID> roots;
 			//how many information
-			size_t depth; // 0=only these one, 1 = also their childs, etc... uint16_t(-1) (ie the max as it's unsigned) for evrything, but i guess 16k depth is enough
+			size_t depth = uint16_t(-1); // 0=only these one, 1 = also their childs, etc... uint16_t(-1) (ie the max as it's unsigned) for evrything, but i guess 16k depth is enough
 			//last commit we have for this element (if it's the same you have, then you can return a null answer)
-			FsID last_commit_received; // note: currently not used to crate the answer TODO: do something with it or erase?
+			FsID last_commit_received = 0; // note: currently not used to crate the answer TODO: do something with it or erase?
 			// last time we fetched you (please give all information that you received/modified since that moment)
-			DateTime last_fetch_time;
+			DateTime last_fetch_time = 0;
 		};
 		typedef std::shared_ptr<FsObjectTreeAnswer> FsObjectTreeAnswerPtr;
 		struct TreeAnswer {
 			ComputerId from;
 			// time of the fetch
-			DateTime answer_time;
+			DateTime answer_time = 0;
 			// all the element in the tree requested that have been modified / created.
 			std::vector<TreeAnswerEltChange> modified;
 			std::vector<FsObjectTreeAnswerPtr> created; //ptr because it's immutable and vector can't store immutable things...
@@ -112,22 +112,37 @@ namespace supercloud {
 			std::vector<TreeAnswerEltDeleted> deleted;
 		};
 
+		typedef std::shared_ptr<TreeAnswer> TreeAnswerPtr;
+
 	protected:
 
 		std::shared_ptr<FsStorage> m_filesystem;
 		std::shared_ptr<SynchroDb> m_syncro;
 		std::shared_ptr<ClusterManager> m_cluster_manager;
-		
+
+		struct TreeAnswerRequest {
+			ComputerId id;
+			std::vector<FsID> roots; // what we want
+			//std::vector<FsID> unavailable; // what we can't have (shouldn't happen)
+			// we only ask that at reachable peers
+			TreeAnswer our_answer; // answer we create bit by bit.
+			std::vector<std::function<void(TreeAnswer*)>> callbacks;
+			bool finished = false;
+			DateTime start = 0;
+			DateTime finished_since = 0;
+		};
 		std::mutex m_mutex_incomplete_requests;
-		std::map<ComputerId, TreeAnswer> m_incomplete_requests;
+		std::unordered_map<ComputerId, TreeAnswerRequest> m_incomplete_requests;
 
 		void register_listener();
 
 		void fillTreeAnswer(TreeAnswer& answer, FsID elt_id, size_t depth, DateTime since);
 	public:
 		//factory
-		[[nodiscard]] static std::shared_ptr<SynchTreeMessageManager> create(std::shared_ptr<ClusterManager> physical_server) {
+		[[nodiscard]] static std::shared_ptr<SynchTreeMessageManager> create(std::shared_ptr<ClusterManager> physical_server, std::shared_ptr<FsStorage> filesystem, std::shared_ptr<SynchroDb> syncro) {
 			std::shared_ptr<SynchTreeMessageManager> pointer = std::shared_ptr<SynchTreeMessageManager>{ new SynchTreeMessageManager(/*TODO*/) };
+			pointer->m_syncro = syncro;
+			pointer->m_filesystem = filesystem;
 			pointer->m_cluster_manager = physical_server;
 			pointer->register_listener();
 			return pointer;
@@ -137,17 +152,20 @@ namespace supercloud {
 			return shared_from_this();
 		}
 
-
 		void receiveMessage(PeerPtr peer, uint8_t messageId, const ByteBuff& message) override;
 
+		//future allow to block execution until there is a result.
+		//callback avoid the need to fetch the result afterwards if it's not blocking.
+		std::future<TreeAnswerPtr> fetchTree(/*ComputerId cid, */FsID root);
+		void fetchTree(/*ComputerId cid, */FsID root, const std::function<void(TreeAnswerPtr)>& callback);
+		SynchTreeMessageManager::TreeAnswerRequest& SynchTreeMessageManager::registerChunkReachableRequest(ComputerId cid);
+
+		// GET/SEND_TREE
 		ByteBuff writeTreeRequestMessage(const TreeRequest& request);
 		TreeRequest readTreeRequestMessage(const ByteBuff& buffer);
-
+		TreeAnswer answerTreeRequest(const PeerPtr sender, TreeRequest&& request);
 		ByteBuff writeTreeAnswerMessage(const TreeAnswer& request);
 		TreeAnswer readTreeAnswerMessage(const ByteBuff& buffer);
-
-		TreeAnswer answerTreeRequest(const PeerPtr sender, TreeRequest&& request);
-
 		void useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& answer);
 	};
 }

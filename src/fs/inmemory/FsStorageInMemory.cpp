@@ -50,7 +50,10 @@ namespace supercloud {
     }
 
     FsID FsStorageInMemory::getNextId(FsType type) {
-        return FsElt::createId(type, m_id_generator.fetch_add(1), m_cid);
+        assert(m_cid != NO_COMPUTER_ID && m_cid > 0);
+        FsID id = FsElt::createId(type, m_id_generator.fetch_add(1), m_cid);
+        assert(FsElt::getComputerId(id) == m_cid);
+        return id;
     }
 
     bool FsStorageInMemory::hasLocally(FsID id) { 
@@ -386,6 +389,25 @@ myfile.close();
             //ensure the parent exists
             FsDirPtr parent = loadDirectory(new_commit.getParent());
             if (!parent) {
+                // special case: our database is empty, we have to create the root
+                if (new_commit.getParent() == new_commit.getId()) {
+                    //root, do we have a root?
+                    assert(new_commit.getId() == getRoot());
+                    assert(m_database.empty());
+                    //create root
+                    std::shared_ptr<FsDirectoryInMemory> new_dir = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {getRoot(), new_commit.getDate(), "", new_commit.getCUGA(), getRoot()} };
+                    if (!new_commit.getCurrent().empty()) {
+                        FsObjectCommit create_commit{ new_commit.getId(), new_commit.getDate(), {} };
+                        for (const FsID& id : new_commit.getCurrent()) {
+                            create_commit.changes.push_back({ 0,id });
+                        }
+                        new_dir->replaceContent(new_commit.getCurrent(), create_commit);
+                    }
+                    new_dir->set_loaded_parent(new_dir);
+                    m_database[new_dir->getId()] = new_dir;
+                    return true;
+                }
+                // normal case: a directory
                 if (auto it = extra_db.find(new_commit.getParent()); it != extra_db.end()) {
                     // create parent first
                     bool result = mergeDirectoryCommit(*static_cast<const FsObject*>(it->second), extra_db);
@@ -460,20 +482,22 @@ myfile.close();
             //now we have our object inside our database (and its childs if directory).
             return true;
         } else {
-            //check immutable part
-            assert(new_commit.getParent() == good_obj->getParent());
-            assert(new_commit.getName() == good_obj->getName());
-            assert(new_commit.getGroupId() == good_obj->getGroupId());
-            assert(new_commit.getCUGA() == good_obj->getCUGA());
-            assert(new_commit.getRenamedFrom() == good_obj->getRenamedFrom());
-            bool not_same = false;
-            not_same |= new_commit.getParent() != good_obj->getParent();
-            not_same |= new_commit.getName() != good_obj->getName();
-            not_same |= new_commit.getGroupId() != good_obj->getGroupId();
-            not_same |= new_commit.getCUGA() != good_obj->getCUGA();
-            not_same |= new_commit.getRenamedFrom() != good_obj->getRenamedFrom();
-            assert(!not_same);
-            if (not_same) return false;
+            //check immutable part (if a creation commit)
+            if (new_commit.getParent() != 0) {
+                assert(new_commit.getParent() == good_obj->getParent());
+                assert(new_commit.getName() == good_obj->getName());
+                assert(new_commit.getGroupId() == good_obj->getGroupId());
+                assert(new_commit.getCUGA() == good_obj->getCUGA());
+                assert(new_commit.getRenamedFrom() == good_obj->getRenamedFrom());
+                bool not_same = false;
+                not_same |= new_commit.getParent() != good_obj->getParent();
+                not_same |= new_commit.getName() != good_obj->getName();
+                not_same |= new_commit.getGroupId() != good_obj->getGroupId();
+                not_same |= new_commit.getCUGA() != good_obj->getCUGA();
+                not_same |= new_commit.getRenamedFrom() != good_obj->getRenamedFrom();
+                assert(!not_same);
+                if (not_same) return false;
+            }
             //is it only a creation check?
             if (new_commit.getCommitsSize() == 0) {
                 assert(new_commit.getCurrent().empty());
@@ -483,7 +507,7 @@ myfile.close();
             //now, i'm sure i have a commit.
             const FsObjectCommit& last_new_commit = new_commit.backCommit();
             // (newly) deleted?
-            if (new_commit.getDeletedDate() >= new_commit.getDate() && good_obj->getDeletedDate() < good_obj->getDate()) {
+            if (new_commit.getDeletedDate() > 0 && new_commit.getDeletedDate() >= new_commit.getDate() && good_obj->getDeletedDate() < good_obj->getDate()) {
                 //check if we are deleted from our parent in the commit.
                 auto it = extra_db.find(new_commit.getParent());
                 if (it == extra_db.end()) {
@@ -571,8 +595,12 @@ myfile.close();
             //assert(elt.operator bool());
             if (!elt) {
                 unknown_id.push_back(cur_id);
-                ++errors_found;
-                error(std::string("Error: we have an fs id (") + cur_id + ") that doesn't exist in our filesystem.");
+                if (FsElt::isChunk(cur_id)) {
+                    //we allow chunks to not be loaded.
+                } else {
+                    error(std::string("Error: we have an fs id (") + cur_id + ") that doesn't exist in our filesystem.");
+                    ++errors_found;
+                }
             } else {
                 tree_id.insert(cur_id);
                 if (FsElt::isObject(cur_id)) {

@@ -31,11 +31,11 @@ namespace supercloud {
 			return;
 		}
 		if (message_id == *SynchMessagetype::GET_TREE) {
-			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE GET_CHUNK_AVAILABILITY from " + sender->getPeerId());
+			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE GET_TREE from " + sender->getPeerId());
 			TreeAnswer answer = answerTreeRequest(sender, readTreeRequestMessage(message));
 			sender->writeMessage(*SynchMessagetype::SEND_TREE, writeTreeAnswerMessage(answer));
 		} else if (message_id == *SynchMessagetype::SEND_TREE) {
-			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_CHUNK_AVAILABILITY from " + sender->getPeerId());
+			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_TREE from " + sender->getPeerId());
 			//update our availability
 			useTreeRequestAnswer(sender, readTreeAnswerMessage(message));
 		} else if (message_id == *SynchMessagetype::GET_HOST_PROPERTIES) {
@@ -44,6 +44,103 @@ namespace supercloud {
 		} else if (message_id == *SynchMessagetype::SEND_HOST_PROPERTIES) {
 			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_HOST_PROPERTIES from " + sender->getPeerId());
 			//TODO
+		}
+	}
+
+
+	SynchTreeMessageManager::TreeAnswerRequest& SynchTreeMessageManager::registerChunkReachableRequest(ComputerId cid) {
+		//write the request
+		if (auto it = m_incomplete_requests.find(cid); it != m_incomplete_requests.end()) {
+			//reuse?
+			TreeAnswerRequest& saved_request = it->second;
+			assert(saved_request.id == cid);
+			assert(saved_request.our_answer.from == cid);
+			if (saved_request.finished) {
+				//reset
+				saved_request.finished = false;
+				saved_request.callbacks.clear();
+				saved_request.our_answer.created.clear();
+				saved_request.our_answer.modified.clear();
+				saved_request.our_answer.deleted.clear();
+				saved_request.our_answer.answer_time = 0;
+				saved_request.start = m_cluster_manager->getCurrentTime();
+				assert(saved_request.callbacks.empty());
+			}
+			return saved_request;
+		} else {
+			TreeAnswerRequest& saved_request = m_incomplete_requests[cid];
+			saved_request.id = cid;
+			saved_request.our_answer.from = cid;
+			saved_request.start = m_cluster_manager->getCurrentTime();
+			return saved_request;
+		}
+	}
+
+	std::future<SynchTreeMessageManager::TreeAnswerPtr> SynchTreeMessageManager::fetchTree(FsID root) {
+		std::shared_ptr<std::promise<TreeAnswerPtr>> notify_tree_fetched{ new std::promise<TreeAnswerPtr> {} };
+		std::future<TreeAnswerPtr> future = notify_tree_fetched->get_future();
+
+		fetchTree(root, [notify_tree_fetched](TreeAnswerPtr answer) {notify_tree_fetched->set_value(answer); });
+
+		return future;
+	}
+
+	void SynchTreeMessageManager::fetchTree(FsID root, const std::function<void(TreeAnswerPtr)>& callback_caller) {
+		//choose which peers/cid is useful to fetch
+		//TODO (stop-gap: broadcast)
+		PeerList peers = m_cluster_manager->getPeersCopy();
+		std::unordered_set<ComputerId> already_seen;
+		foreach(it, peers) {
+			if (!(*it)->isConnected() || already_seen.find((*it)->getComputerId()) != already_seen.end())
+			{
+				it.erase();
+			}
+		}
+		if (!peers.empty()) {
+			std::lock_guard lock{ m_mutex_incomplete_requests };
+			std::shared_ptr<TreeAnswer> full_answer = std::make_shared<TreeAnswer>();
+			std::shared_ptr<std::unordered_set<ComputerId>> all_peers = std::make_shared<std::unordered_set<ComputerId>>();
+			for (PeerPtr& peer : peers) {
+				all_peers->insert(peer->getComputerId());
+			}
+			auto callback_wait_all = [full_answer, all_peers, callback_caller](TreeAnswer* answer) {
+				if (!all_peers->empty()) {
+					all_peers->erase(answer->from);
+					if (full_answer->answer_time < answer->answer_time) {
+						full_answer->answer_time = std::max(full_answer->answer_time, answer->answer_time);
+						full_answer->modified.insert(full_answer->modified.end(), answer->modified.begin(), answer->modified.end());
+						full_answer->created.insert(full_answer->created.end(), answer->created.begin(), answer->created.end());
+						full_answer->deleted.insert(full_answer->deleted.end(), answer->deleted.begin(), answer->deleted.end());
+					}
+					if (all_peers->empty()) {
+						callback_caller(full_answer);
+					}
+				}
+			};
+			for (PeerPtr& peer : peers) {
+				//create request
+				TreeRequest request;
+				request.roots.push_back(root);
+				request.depth = uint16_t(-1);
+				const SynchState& synch_state = m_syncro->getSynchState(peer->getComputerId());
+				if (synch_state.id) {
+					request.last_commit_received = synch_state.last_commit;
+					request.last_fetch_time = synch_state.last_commit_received_date;
+					assert(synch_state.last_commit_date > 0);
+					assert(synch_state.last_commit_received_date > 0);
+				} else {
+					//no data on this cid: get all
+					request.last_commit_received = 0;
+					request.last_fetch_time = 0;
+				}
+				//create request 'waiter'
+				TreeAnswerRequest& saved_request = registerChunkReachableRequest(peer->getComputerId());
+				saved_request.roots.push_back(root);
+				saved_request.callbacks.push_back(callback_wait_all);
+				//send request
+				ByteBuff buff = writeTreeRequestMessage(request);
+				peer->writeMessage(*SynchMessagetype::GET_TREE, buff);// writeTreeRequestMessage(request));
+			}
 		}
 	}
 
@@ -56,7 +153,7 @@ namespace supercloud {
 		for (const FsID& id : request.roots) {
 			buff.putULong(id);
 		}
-		return buff;
+		return buff.flip();
 	}
 
 	SynchTreeMessageManager::TreeRequest SynchTreeMessageManager::readTreeRequestMessage(const ByteBuff& buffer) {
@@ -119,7 +216,7 @@ namespace supercloud {
 			buffer.putLong(deleted.last_commit_time);
 			buffer.putULong(deleted.renamed_to);
 		}
-		return buffer;
+		return buffer.flip();
 	}
 	SynchTreeMessageManager::TreeAnswer SynchTreeMessageManager::readTreeAnswerMessage(const ByteBuff& buffer) {
 		TreeAnswer answer;
@@ -182,8 +279,8 @@ namespace supercloud {
 				FsObjectPtr object = FsElt::toObject(elt);
 				//is it created, modified or deleted?
 				size_t commit_size = object->getCommitsSize();
-				if (object->getDate() > since || (commit_size > 0 && object->getCommit(0).date > since) ) {
-					// the object has been created after the last fetch, or we received the first (creation) commit after the last fetch
+				if (object->getDate() > since) {
+					// the object has been created after the last fetch
 					//created
 					answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ elt_id , object->getDepth() , object->size(), object->getDate() , object->getName() ,
 						object->getCUGA() , object->getParent() , object->getGroupId(), object->getCurrent() } });
@@ -213,7 +310,7 @@ namespace supercloud {
 					answer.modified.back().last_commit_time = object->getCommitsSize() == 0 ? 0 : object->getCommit(object->getCommitsSize() - 1).date;
 					answer.modified.back().state = object->getCurrent();
 				}
-				//if directory, and depth not 0, and there is a modification insde since he last fetch, go deeper
+				//if directory, and depth not 0, and there is a modification inside since the last fetch, go deeper
 				if (FsElt::isDirectory(elt_id) && depth > 0) {
 					FsDirPtr dir = FsElt::toDirectory(elt);
 					auto [commit_id, commit_time] = dir->getLastModification();
@@ -245,12 +342,15 @@ namespace supercloud {
 		std::lock_guard lock{ m_mutex_incomplete_requests };
 		//fusion the result with currently waiting answers?
 		if (auto it = m_incomplete_requests.find(sender->getComputerId()); it != m_incomplete_requests.end()) {
-			//add it into answer
-			answer.modified.insert(answer.modified.end(), it->second.modified.begin(), it->second.modified.end());
-			answer.created.insert(answer.created.end(), it->second.created.begin(), it->second.created.end());
-			answer.deleted.insert(answer.deleted.end(), it->second.deleted.begin(), it->second.deleted.end());
-			//remove it from the map
-			m_incomplete_requests.erase(it);
+			//add it into the general answer
+			it->second.our_answer.modified.insert(it->second.our_answer.modified.end(), answer.modified.begin(), answer.modified.end());
+			it->second.our_answer.created.insert(it->second.our_answer.created.end(), answer.created.begin(), answer.created.end());
+			it->second.our_answer.deleted.insert(it->second.our_answer.deleted.end(), answer.deleted.begin(), answer.deleted.end());
+			it->second.our_answer.answer_time = answer.answer_time;
+		} else {
+			TreeAnswerRequest& req = m_incomplete_requests[sender->getComputerId()];
+			req.id = sender->getComputerId();
+			req.our_answer = answer;
 		}
 
 		//remove change/create if they are deleted (shouldn't be transmitted, but it's better to check)
@@ -324,7 +424,11 @@ namespace supercloud {
 				}
 			}
 
-			m_incomplete_requests[sender->getComputerId()] = answer;
+			if (auto it = m_incomplete_requests.find(sender->getComputerId()); it != m_incomplete_requests.end()) {
+				it->second.finished = false;
+			} else {
+				assert(false);
+			}
 			sender->writeMessage(*SynchMessagetype::GET_TREE, this->writeTreeRequestMessage(request));
 		} else {
 			//the changes are "complete"
@@ -353,7 +457,19 @@ namespace supercloud {
 			}
 			//update our fs with these
 			for (const auto& depth2stub : ordered_stubs) {
-				m_syncro->mergeCommit(*depth2stub.second, db_stubs);
+				m_syncro->mergeCommit(sender->getComputerId(), *depth2stub.second, db_stubs);
+			}
+
+			if (auto it = m_incomplete_requests.find(sender->getComputerId()); it != m_incomplete_requests.end()) {
+				it->second.finished = true;
+				it->second.finished_since = m_cluster_manager->getCurrentTime();
+				//call the callbacks
+				foreach(callback_it, it->second.callbacks) {
+					callback_it.get()(&it->second.our_answer);
+					callback_it.erase();
+				}
+			} else {
+				assert(false);
 			}
 #ifndef NDEBUG
 			// assert that the resulted filesystem is safe

@@ -1,5 +1,5 @@
 
-//#define CATCH_CONFIG_DISABLE
+#define CATCH_CONFIG_DISABLE
 
 #include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
@@ -54,7 +54,22 @@ namespace supercloud::test::syncchunk {
 
         //launch first peer
         ServPtr net = PhysicalServer::createAndInit(
-            std::make_unique<InMemoryParameters>(), 
+            std::make_unique<InMemoryParameters>(),
+            std::shared_ptr<InMemoryParameters>(new InMemoryParameters(params_net)));
+        if (listen_port > 100) {
+            net->listen(listen_port);
+        }
+        net->launchUpdater();
+
+        return net;
+    }
+
+    ServPtr createPeerFakeNets(InMemoryParameters& params_net, std::vector<NetPtr> networks, const std::string& my_ip, uint16_t listen_port = 0) {
+        ((FakeSocketFactory*)ServerSocket::factory.get())->setNextInstanceConfiguration(my_ip, networks);
+
+        //launch first peer
+        ServPtr net = PhysicalServer::createAndInit(
+            std::make_unique<InMemoryParameters>(),
             std::shared_ptr<InMemoryParameters>(new InMemoryParameters(params_net)));
         if (listen_port > 100) {
             net->listen(listen_port);
@@ -103,92 +118,6 @@ namespace supercloud::test::syncchunk {
         param.setBool("FirstConnection", true);
     }
 
-    SCENARIO("Test ExchangeChunkMessageManager AVAILABILITY with fake network") {
-        ServerSocket::factory.reset(new FakeSocketFactory());
-        NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
-        NetPtr net_192_168_2 = NetPtr{ new FakeLocalNetwork{"192.168.2"} };
-        std::map < std::string, NetPtr > fakeNetworks;
-        std::string last_listen_ip = "";
-        uint16_t last_listen_port = 0;
-
-        //create 2 instance, network + fs + chunk manager (and synch object but not active)
-        InMemoryParameters param_serv1 = createNewConfiguration();
-        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
-        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-        InMemoryParameters param_serv2 = createNewConfiguration();
-        addEntryPoint(param_serv2, "192.168.0.1", 4242);
-        ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
-        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-
-        //now create  dirs & files in the serv2
-        FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
-        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
-        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
-        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
-        FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
-        REQUIRE(fs2_fic2->getCurrent().size() == 1);
-        FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
-        FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
-        FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
-
-        // connect both computer
-        std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1);
-        std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv2);
-        serv2->connect();
-
-        //wait connection
-        DateTime waiting1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
-        DateTime waiting2 = waiter2->startWait().waitConnection(std::chrono::milliseconds(10000));
-        REQUIRE(waiting1 > 0);
-        REQUIRE(waiting2 > 0);
-        REQUIRE(serv1->getState().isConnected());
-        REQUIRE(serv2->getState().isConnected());
-        REQUIRE(serv1->getPeer()->isConnected());
-        REQUIRE(serv2->getPeer()->isConnected());
-
-        //now connected, test some simple chunk fetch
-        auto future_chunk = chunkmana1->fetchChunk(fs2_fic2->getCurrent().front());
-        std::future_status status = future_chunk.wait_for(std::chrono::milliseconds(10000));
-        REQUIRE(status == std::future_status::ready);
-        REQUIRE(future_chunk.valid());
-        std::shared_ptr<ExchangeChunkMessageManager::FsChunkTempElt> chunkptr = future_chunk.get();
-        REQUIRE(chunkptr);
-        std::string file2_content = toString(readAll(*chunkptr));
-        std::cout << "read chunk: " << file2_content << "\n";
-        REQUIRE(file2_content == std::string("fic2"));
-
-        future_chunk = chunkmana1->fetchChunk(fs2_fic12->getCurrent().front());
-        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
-        REQUIRE(status == std::future_status::ready);
-        REQUIRE(future_chunk.valid());
-        std::string file12_content = toString(readAll(*future_chunk.get()));
-        REQUIRE(file12_content == std::string("fic12"));
-
-        future_chunk = chunkmana1->fetchChunk(fs2_fic112->getCurrent().front());
-        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
-        REQUIRE(status == std::future_status::ready);
-        REQUIRE(future_chunk.valid());
-        std::string file112_content = toString(readAll(*future_chunk.get()));
-        REQUIRE(file112_content == std::string("fic112"));
-
-        future_chunk = chunkmana1->fetchChunk(fs2_fic1112->getCurrent().front());
-        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
-        REQUIRE(status == std::future_status::ready);
-        REQUIRE(future_chunk.valid());
-        std::string file1112_content = toString(readAll(*future_chunk.get()));
-        REQUIRE(file1112_content == std::string("fic1112"));
-
-
-
-    }
 
     SCENARIO("Test ExchangeChunkMessageManager message write/read") {
 
@@ -263,7 +192,7 @@ namespace supercloud::test::syncchunk {
             ExchangeChunkMessageManager::ChunkReachableAnswer data_1;
             data_1.chunk_or_file_id_request = newid();
             for (int i = 0; i < 100; i++) {
-                data_1.paths[newid()] = ExchangeChunkMessageManager::ChunkReachablePath{ ComputerId(rand_u63() & COMPUTER_ID_MASK), rand_u8(), rand_u8() };
+                data_1.paths[newid()] = ExchangeChunkMessageManager::ChunkReachablePath{ {ComputerId(rand_u63() & COMPUTER_ID_MASK),ComputerId(rand_u63() & COMPUTER_ID_MASK)}, rand_u8() };
             }
             ByteBuff buff_1 = messageManager->writeChunkReachableAnswer(data_1);
             ExchangeChunkMessageManager::ChunkReachableAnswer data_2 = messageManager->readChunkReachableAnswer(buff_1.rewind());
@@ -320,6 +249,345 @@ namespace supercloud::test::syncchunk {
             REQUIRE(buff_1.rewind().getAll() == buff_2.rewind().getAll());
 
         }
+
+    }
+
+    SCENARIO("Test ExchangeChunkMessageManager AVAILABILITY with fake network") {
+        ServerSocket::factory.reset(new FakeSocketFactory());
+        NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+        NetPtr net_192_168_2 = NetPtr{ new FakeLocalNetwork{"192.168.2"} };
+        std::map < std::string, NetPtr > fakeNetworks;
+        std::string last_listen_ip = "";
+        uint16_t last_listen_port = 0;
+
+        //create 2 instance, network + fs + chunk manager (and synch object but not active)
+        InMemoryParameters param_serv1 = createNewConfiguration();
+        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
+        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv2 = createNewConfiguration();
+        addEntryPoint(param_serv2, "192.168.0.1", 4242);
+        ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
+        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+
+        // connect both computer
+        std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1);
+        std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv2);
+        serv2->connect();
+
+        //wait connection
+        DateTime waiting1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting2 = waiter2->startWait().waitConnection(std::chrono::milliseconds(10000));
+        REQUIRE(waiting1 > 0);
+        REQUIRE(waiting2 > 0);
+        REQUIRE(serv1->getState().isConnected());
+        REQUIRE(serv2->getState().isConnected());
+        REQUIRE(serv1->getPeer()->isConnected());
+        REQUIRE(serv2->getPeer()->isConnected());
+
+        //update computerId;
+        fs1->setMyComputerId(serv1->getComputerId());
+        fs2->setMyComputerId(serv2->getComputerId());
+
+        //now create  dirs & files in the serv2
+        FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        REQUIRE(fs2_fic2->getCurrent().size() == 1);
+        FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+
+        REQUIRE(!fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+
+        //now connected, test some simple chunk fetch
+        auto future_chunk = chunkmana1->fetchChunk(fs2_fic2->getCurrent().front());
+        std::future_status status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::shared_ptr<ExchangeChunkMessageManager::FsChunkTempElt> chunkptr = future_chunk.get();
+        REQUIRE(chunkptr);
+        std::string file2_content = toString(readAll(*chunkptr));
+        std::cout << "read chunk: " << file2_content << "\n";
+        REQUIRE(file2_content == std::string("fic2"));
+
+        future_chunk = chunkmana1->fetchChunk(fs2_fic12->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file12_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file12_content == std::string("fic12"));
+
+        future_chunk = chunkmana1->fetchChunk(fs2_fic112->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file112_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file112_content == std::string("fic112"));
+
+        future_chunk = chunkmana1->fetchChunk(fs2_fic1112->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file1112_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file1112_content == std::string("fic1112"));
+
+        //REQUIRE(fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        //REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+    }
+
+
+    SCENARIO("Test ExchangeChunkMessageManager AVAILABILITY with fake network and a gateway") {
+        ServerSocket::factory.reset(new FakeSocketFactory());
+        NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+        NetPtr net_192_168_2 = NetPtr{ new FakeLocalNetwork{"192.168.2"} }; //TODO use this one
+        std::map < std::string, NetPtr > fakeNetworks;
+        std::string last_listen_ip = "";
+        uint16_t last_listen_port = 0;
+
+        //create 2 instance, network + fs + chunk manager (and synch object but not active)
+        InMemoryParameters param_serv1 = createNewConfiguration();
+        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
+        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv2 = createNewConfiguration();
+        addEntryPoint(param_serv2, "192.168.0.1", 4242);
+        ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
+        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv3 = createNewConfiguration();
+        addEntryPoint(param_serv3, "192.168.0.1", 4242);
+        ServPtr serv3 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.4");
+        auto [fs3, synch3, chunkmana3] = addFileSystem(serv3);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+
+        // connect both computer
+        std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1);
+        std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv2);
+        std::shared_ptr<WaitConnection> waiter3 = WaitConnection::create(serv3);
+        serv2->connect();
+        serv3->connect();
+
+        //wait connection
+        DateTime waiting1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting2 = waiter2->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting3 = waiter3->startWait().waitConnection(std::chrono::milliseconds(10000));
+        REQUIRE(waiting1 > 0);
+        REQUIRE(waiting2 > 0);
+        REQUIRE(waiting3 > 0);
+        REQUIRE(serv1->getState().isConnected());
+        REQUIRE(serv2->getState().isConnected());
+        REQUIRE(serv3->getState().isConnected());
+        REQUIRE(serv1->getPeer()->isConnected());
+        REQUIRE(serv2->getPeer()->isConnected());
+        REQUIRE(serv3->getPeer()->isConnected());
+        REQUIRE(serv1->getPeersCopy().size() == 2);
+        REQUIRE(serv2->getPeersCopy().size() == 1);
+        REQUIRE(serv3->getPeersCopy().size() == 1);
+
+
+        //update computerId;
+        fs1->setMyComputerId(serv1->getComputerId());
+        fs2->setMyComputerId(serv2->getComputerId());
+
+        //now create  dirs & files in the serv2
+        FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        REQUIRE(fs2_fic2->getCurrent().size() == 1);
+        FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+
+        REQUIRE(!fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(!fs3->hasLocally(fs2_fic2->getCurrent().front()));
+
+        //now connected, test some simple chunk fetch
+        auto future_chunk = chunkmana3->fetchChunk(fs2_fic2->getCurrent().front());
+        std::future_status status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::shared_ptr<ExchangeChunkMessageManager::FsChunkTempElt> chunkptr = future_chunk.get();
+        REQUIRE(chunkptr);
+        std::string file2_content = toString(readAll(*chunkptr));
+        std::cout << "read chunk: " << file2_content << "\n";
+        REQUIRE(file2_content == std::string("fic2"));
+
+        future_chunk = chunkmana3->fetchChunk(fs2_fic12->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file12_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file12_content == std::string("fic12"));
+
+        future_chunk = chunkmana3->fetchChunk(fs2_fic112->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file112_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file112_content == std::string("fic112"));
+
+        future_chunk = chunkmana3->fetchChunk(fs2_fic1112->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file1112_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file1112_content == std::string("fic1112"));
+
+
+        //REQUIRE(fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        //REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+        //REQUIRE(fs3->hasLocally(fs2_fic2->getCurrent().front()));
+
+    }
+
+    SCENARIO("Test ExchangeChunkMessageManager AVAILABILITY with fake network and two gateway") {
+        ServerSocket::factory.reset(new FakeSocketFactory());
+        NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+        NetPtr net_192_168_42 = NetPtr{ new FakeLocalNetwork{"192.168.42"} }; //TODO use these ones
+        NetPtr net_192_168_44 = NetPtr{ new FakeLocalNetwork{"192.168.44"} };
+        std::map < std::string, NetPtr > fakeNetworks;
+        std::string last_listen_ip = "";
+        uint16_t last_listen_port = 0;
+
+        //create 2 instance, network + fs + chunk manager (and synch object but not active)
+        InMemoryParameters param_serv1 = createNewConfiguration();
+        ServPtr serv1 = createPeerFakeNets(param_serv1, { net_192_168_0, net_192_168_42 }, "0.0.0.1", 4242);
+        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv2 = createNewConfiguration();
+        addEntryPoint(param_serv2, "192.168.0.1", 4242);
+        ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
+        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv3 = createNewConfiguration();
+        addEntryPoint(param_serv3, "192.168.42.1", 4242);
+        ServPtr serv3 = createPeerFakeNets(param_serv2, { net_192_168_42, net_192_168_44 }, "0.0.0.3", 4242);
+        auto [fs3, synch3, chunkmana3] = addFileSystem(serv3);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv4 = createNewConfiguration();
+        addEntryPoint(param_serv4, "192.168.44.3", 4242);
+        ServPtr serv4 = createPeerFakeNet(param_serv2, net_192_168_44, "192.168.44.4");
+        auto [fs4, synch4, chunkmana4] = addFileSystem(serv4);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        // 2 -> 1 <-> 3 <- 4
+
+
+        // connect both computer
+        std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1, 2);
+        std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv2);
+        std::shared_ptr<WaitConnection> waiter3 = WaitConnection::create(serv3, 2);
+        std::shared_ptr<WaitConnection> waiter4 = WaitConnection::create(serv4);
+        serv2->connect();
+        serv3->connect();
+        serv4->connect();
+
+        //wait connection
+        DateTime waiting1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting2 = waiter2->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting3 = waiter3->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting4 = waiter4->startWait().waitConnection(std::chrono::milliseconds(10000));
+        REQUIRE(waiting1 > 0);
+        REQUIRE(waiting2 > 0);
+        REQUIRE(waiting3 > 0);
+        REQUIRE(waiting4 > 0);
+        REQUIRE(serv1->getState().isConnected());
+        REQUIRE(serv2->getState().isConnected());
+        REQUIRE(serv3->getState().isConnected());
+        REQUIRE(serv4->getState().isConnected());
+        REQUIRE(serv1->getPeer()->isConnected());
+        REQUIRE(serv2->getPeer()->isConnected());
+        REQUIRE(serv3->getPeer()->isConnected());
+        REQUIRE(serv4->getPeer()->isConnected());
+        REQUIRE(serv1->getPeersCopy().size() == 2);
+        REQUIRE(serv2->getPeersCopy().size() == 1);
+        REQUIRE(serv3->getPeersCopy().size() == 2);
+        REQUIRE(serv4->getPeersCopy().size() == 1);
+
+        //update computerId;
+        fs1->setMyComputerId(serv1->getComputerId());
+        fs2->setMyComputerId(serv2->getComputerId());
+
+        //now create  dirs & files in the serv2
+        FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        REQUIRE(fs2_fic2->getCurrent().size() == 1);
+        FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+
+        REQUIRE(!fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(!fs3->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(!fs4->hasLocally(fs2_fic2->getCurrent().front()));
+
+        //now connected, test some simple chunk fetch
+        auto future_chunk = chunkmana4->fetchChunk(fs2_fic2->getCurrent().front());
+        std::future_status status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::shared_ptr<ExchangeChunkMessageManager::FsChunkTempElt> chunkptr = future_chunk.get();
+        REQUIRE(chunkptr);
+        std::string file2_content = toString(readAll(*chunkptr));
+        std::cout << "read chunk: " << file2_content << "\n";
+        REQUIRE(file2_content == std::string("fic2"));
+
+        future_chunk = chunkmana4->fetchChunk(fs2_fic12->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file12_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file12_content == std::string("fic12"));
+
+        future_chunk = chunkmana4->fetchChunk(fs2_fic112->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file112_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file112_content == std::string("fic112"));
+
+        future_chunk = chunkmana4->fetchChunk(fs2_fic1112->getCurrent().front());
+        status = future_chunk.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_chunk.valid());
+        std::string file1112_content = toString(readAll(*future_chunk.get()));
+        REQUIRE(file1112_content == std::string("fic1112"));
+
+
+        //REQUIRE(fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        //REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+        //REQUIRE(fs3->hasLocally(fs2_fic2->getCurrent().front()));
 
     }
 }

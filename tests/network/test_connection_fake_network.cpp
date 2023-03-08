@@ -57,11 +57,25 @@ namespace supercloud::test {
 		return net;
 	}
 
+	ServPtr createPeerFakeNets(ConfigFileParameters& params_net, std::vector<NetPtr> networks, const std::string& my_ip, uint16_t listen_port = 0) {
+		((FakeSocketFactory*)ServerSocket::factory.get())->setNextInstanceConfiguration(my_ip, networks);
+
+		//launch first peer
+		ServPtr net = PhysicalServer::createAndInit(
+			std::make_unique<InMemoryParameters>(),
+			std::shared_ptr<ConfigFileParameters>(new ConfigFileParameters(params_net)));
+		if (listen_port > 100) {
+			net->listen(listen_port);
+		}
+		net->launchUpdater();
+
+		return net;
+	}
+
 
 	SCENARIO("testing the connection between two peers") {
 		ServerSocket::factory.reset(new FakeSocketFactory());
 		NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
-		NetPtr net_192_168_2 = NetPtr{ new FakeLocalNetwork{"192.168.2"} };
 
 		std::map < std::string, NetPtr > fakeNetworks;
 		std::string last_listen_ip = "";
@@ -216,11 +230,13 @@ namespace supercloud::test {
 				REQUIRE(client_software[1]->getPeersCopy().front()->isConnected());
 				REQUIRE(serv->getIdentityManager().getLoadedPeers().size() == 2); // first & second
 				REQUIRE((serv->getIdentityManager().getLoadedPeers().front()->getComputerId() == client_software[1]->getComputerId()
-				|| serv->getIdentityManager().getLoadedPeers().back()->getComputerId() == client_software[1]->getComputerId()));
+					|| serv->getIdentityManager().getLoadedPeers().back()->getComputerId() == client_software[1]->getComputerId()));
 				//REQUIRE(client_software[1]->getIdentityManager().getLoadedPeers().size() >= 2); // there is a fake peer for first connection, and maybe the first client
-				REQUIRE(client_software[0]->getIdentityManager().getLoadedPeers().size() == 1); // can't see them anymore, correctly merged now
-				REQUIRE(client_software[1]->getIdentityManager().getLoadedPeers().size() == 1);
-				REQUIRE(client_software[1]->getIdentityManager().getLoadedPeers().back()->getComputerId() == serv->getComputerId());
+				//REQUIRE(client_software[1]->getIdentityManager().getLoadedPeers().size() == 1); // can't see them anymore, correctly merged now
+				REQUIRE(client_software[1]->getIdentityManager().getLoadedPeers().size() == 2); //he knowns about client_software[0] 
+				REQUIRE(client_software[0]->getIdentityManager().getLoadedPeers().size() == 2); //he knowns about client_software[1] 
+				REQUIRE((client_software[1]->getIdentityManager().getLoadedPeers().back()->getComputerId() == serv->getComputerId() ||
+					client_software[1]->getIdentityManager().getLoadedPeers().front()->getComputerId() == serv->getComputerId()));
 				//REQUIRE(serv->getIdentityManager().);
 
 				for (auto lock : locks) {
@@ -241,6 +257,117 @@ namespace supercloud::test {
 		for (ConfigFileParameters& client : client_parameter) {
 			std::filesystem::remove_all(client.getFileOrCreate().parent_path());
 		}
+	}
+
+	SCENARIO("testing the connection between three peers in two networks") {
+		ServerSocket::factory.reset(new FakeSocketFactory());
+		NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+		NetPtr net_192_168_42 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+
+		std::map < std::string, NetPtr > fakeNetworks;
+		std::string last_listen_ip = "";
+		uint16_t last_listen_port = 0;
+
+		ConfigFileParameters param_serv_router = createNewConfiguration();
+		ServPtr serv_router = createPeerFakeNets(param_serv_router, { net_192_168_0, net_192_168_42 }, "0.0.0.1", 4242);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+		ConfigFileParameters param_serv_res0 = createNewConfiguration();
+		addEntryPoint(param_serv_res0, "192.168.0.1", 4242);
+		ServPtr serv_res0 = createPeerFakeNet(param_serv_res0, net_192_168_0, "192.168.0.2", 4242);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+		ConfigFileParameters param_serv_res42 = createNewConfiguration();
+		addEntryPoint(param_serv_res42, "192.168.42.1", 4242);
+		ServPtr serv_res42 = createPeerFakeNet(param_serv_res42, net_192_168_42, "192.168.42.2", 4242);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+
+		GIVEN(("connect second")) {
+			std::shared_ptr<WaitConnection> waiter0 = WaitConnection::create(serv_router, 2);
+			std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv_res0, 1);
+			serv_res0->connect();
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv_res42, 1);
+			waiter2->startWait();
+			serv_res42->connect();
+			THEN("connect fully in less than 100ms") {
+				//it has 100ms to connect.
+				//size_t milis = 0;
+				//bool success = false;
+				//for (; milis < 10000 && !success; milis += 1) {
+				//	std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				//	success = serv->getState().isConnected();
+				//	success = success && client_software[0]->getState().isConnected();
+				//	success = success && client_software[1]->getState().isConnected();
+				//}
+				//std::cout << "connection in " << milis << "milis\n";
+				//std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				//check serv
+				DateTime waiting_serv = waiter0->startWait().waitConnection(std::chrono::milliseconds(10000));
+				REQUIRE(waiting_serv > 0);
+				//REQUIRE(waiting_serv < 100);
+				REQUIRE(serv_router->getState().isConnected());
+				REQUIRE(serv_router->getPeer()->isConnected());
+				//check client_software[0]
+				DateTime waiting_cli1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
+				REQUIRE(waiting_cli1 > 0);
+				//REQUIRE(waiting_cli1 < 100);
+				REQUIRE(serv_res0->getState().isConnected());
+				REQUIRE(serv_res0->getPeer()->isConnected());
+				//check client_software[1]
+				DateTime waiting_cli2 = waiter2->waitConnection(std::chrono::milliseconds(10000));
+				REQUIRE(waiting_cli2 > 0);
+				//REQUIRE(waiting_cli2 < 100);
+				REQUIRE(serv_res42->getState().isConnected());
+				REQUIRE(serv_res42->getPeer()->isConnected());
+
+				//connected, stop message read
+				std::vector<std::lock_guard<std::mutex>*> locks;
+				for (PeerPtr peer : serv_router->getPeersCopy()) {
+					locks.push_back(new std::lock_guard{ peer->lockSocketRead() });
+				}
+				for (PeerPtr peer : serv_res0->getPeersCopy()) {
+					locks.push_back(new std::lock_guard{ peer->lockSocketRead() });
+				}
+				for (PeerPtr peer : serv_res42->getPeersCopy()) {
+					locks.push_back(new std::lock_guard{ peer->lockSocketRead() });
+				}
+
+				REQUIRE(serv_res42->getState().isConnected());
+				REQUIRE(serv_res42->getComputerId() != 0);
+				REQUIRE(serv_res42->getPeerId() != 0);
+				REQUIRE(serv_res42->getComputerId() != NO_COMPUTER_ID);
+				REQUIRE(serv_res42->getPeerId() != NO_PEER_ID);
+				REQUIRE(serv_res42->getNbPeers() >= 1);
+				REQUIRE(serv_res42->getNbPeers() >= 1);
+				REQUIRE(serv_router->getPeersCopy().front()->isConnected());
+				REQUIRE(serv_res42->getPeersCopy().front()->isConnected());
+				REQUIRE(serv_router->getIdentityManager().getLoadedPeers().size() == 2); // first & second
+				REQUIRE((serv_router->getIdentityManager().getLoadedPeers().front()->getComputerId() == serv_res42->getComputerId()
+					|| serv_router->getIdentityManager().getLoadedPeers().back()->getComputerId() == serv_res42->getComputerId()));
+				REQUIRE(serv_res0->getIdentityManager().getLoadedPeers().size() == 2); // see the router, and a knowledge about the other connected peer (becasue they have a published interface)
+				REQUIRE(serv_res42->getIdentityManager().getLoadedPeers().size() == 2);
+				REQUIRE(serv_res0->getIdentityManager().getLoadedPeers().front()->getComputerId() == serv_router->getComputerId());
+				REQUIRE(serv_res42->getIdentityManager().getLoadedPeers().front()->getComputerId() == serv_router->getComputerId());
+				//REQUIRE(serv->getIdentityManager().);
+
+				for (auto lock : locks) {
+					delete lock;
+				}
+			}
+
+		}
+
+		serv_router->close();
+		serv_res0->close();
+		serv_res42->close();
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+
+		std::filesystem::remove_all(param_serv_router.getFileOrCreate().parent_path());
+		std::filesystem::remove_all(param_serv_res0.getFileOrCreate().parent_path());
+		std::filesystem::remove_all(param_serv_res42.getFileOrCreate().parent_path());
 	}
 
 SCENARIO("testing the simple connection between clients and a server in the same network") {
@@ -307,7 +434,8 @@ SCENARIO("testing the simple connection between clients and a server in the same
 				REQUIRE(computers[check]->getComputerId() != NO_COMPUTER_ID);
 				REQUIRE(computers[check]->getPeerId() != NO_PEER_ID);
 				REQUIRE(computers[check]->getPeersCopy().size() == (check == 0 ? 2 : 1));
-				REQUIRE(computers[check]->getIdentityManager().getLoadedPeers().size() == computers[check]->getPeersCopy().size());
+				// IdentityManager contains connected peers & known peers we can't conenct to
+				//REQUIRE(computers[check]->getIdentityManager().getLoadedPeers().size() == computers[check]->getPeersCopy().size());
 			}
 			}
 

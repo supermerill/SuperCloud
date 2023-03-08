@@ -53,7 +53,7 @@ namespace supercloud {
 
     class FsStorage {
     protected:
-        ComputerId m_cid;
+        ComputerId m_cid = NO_COMPUTER_ID;
 
         std::recursive_mutex m_write_mutex;
 
@@ -61,7 +61,11 @@ namespace supercloud {
     public:
         FsStorage(ComputerId my_id) : m_cid(my_id) {}
 
-        ComputerId getMyComputerId() { return m_cid; }
+        ComputerId getMyComputerId() { assert(m_cid > 0 && m_cid != NO_COMPUTER_ID); return m_cid; }
+        void setMyComputerId(ComputerId id) {
+            assert(m_cid == 0 || m_cid == NO_COMPUTER_ID);
+            m_cid = id;
+        }
 
         //the root is always the id 3 (a directory with id 0 from computer 0).
         FsID getRoot() const;

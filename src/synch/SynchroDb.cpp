@@ -21,18 +21,31 @@ namespace supercloud {
 
 
     void SynchroDb::updateFetchTime(ComputerId cid) {
-        m_current_states[cid].last_fetch_date = m_network->getCurrentTime();
+        if (auto it = m_current_states.find(cid); it != m_current_states.end()) {
+            it->second.last_fetch_date = m_network->getCurrentTime();
+        } else {
+            assert(cid != 0);
+            SynchState& my_state = m_current_states[cid];
+            my_state.id = cid;
+            my_state.last_fetch_date = m_network->getCurrentTime();
+        }
     }
 
-    bool SynchroDb::mergeCommit(const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db) {
+    bool SynchroDb::mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db) {
         /// When we fetch data, we receive FsElt with only the last commits that should be useful for us. (it shouldn't send data much older than what we have).
         /// The object only have the most basic implementation (ids of commits with ids of content, with dates).
         /// This method use this information to modify our own implementation of the FsStorage to insert the data we diddn't known yet.
         /// Note: we may only get the state of the last commit (for each object) since the last fetch. Each server have an incomplete knowledge of the past commit, as these
         ///  can be destroyed at will to avoid clutter. The important thing is that a commit id is unique and the state of the FsElt for his commit is the same evrywhere.
-        
-        SynchState& my_state = m_current_states[to_merge.getOwner()];
+        SynchState no_source;
+        SynchState& my_state = from == 0 ? no_source : m_current_states[from];
+        if (!my_state.id) {
+            //create it
+            my_state.id = to_merge.getOwner();
+        }
         FsID last_id = my_state.last_commit;
+        assert(my_state.last_commit_date >= 0);
+        assert(my_state.last_commit_received_date >= 0);
         if (FsElt::isChunk(to_merge.getId())) {
             //chunk is immutable. its commit is its id.
             if (last_id < to_merge.getId()) {
@@ -40,6 +53,8 @@ namespace supercloud {
                 my_state.last_commit = to_merge.getId();
                 my_state.last_commit_date = to_merge.getDate();
                 my_state.last_commit_received_date = m_network->getCurrentTime();
+                assert(my_state.last_commit_date > 0);
+                assert(my_state.last_commit_received_date > 0);
 
                 //it's not needed to send chunks. the file commit already has their ids.
                 assert(false);
@@ -52,16 +67,28 @@ namespace supercloud {
             my_state.last_commit = commit.id;
             my_state.last_commit_date = commit.date;
             my_state.last_commit_received_date = m_network->getCurrentTime();
+            assert(my_state.last_commit_date > 0);
+            assert(my_state.last_commit_received_date > 0);
             //ask fs to update the file
             return m_file_storage->mergeFileCommit(*file, extra_db);
         } else if (FsElt::isDirectory(to_merge.getId())) {
             const FsDirectory* dir = static_cast<const FsDirectory*>(&to_merge);
-            assert(dir->getCommitsSize() > 0);
-            const FsObjectCommit& commit = dir->getCommit(dir->getCommitsSize() - 1);
-            //update
-            my_state.last_commit = commit.id;
-            my_state.last_commit_date = commit.date;
-            my_state.last_commit_received_date = m_network->getCurrentTime();
+            //assert(dir->getCommitsSize() > 0); //can be 0 if it's an empty directory
+            if (dir->getCommitsSize() > 0) {
+                const FsObjectCommit& commit = dir->getCommit(dir->getCommitsSize() - 1);
+                //update
+                my_state.last_commit = commit.id;
+                my_state.last_commit_date = commit.date;
+                my_state.last_commit_received_date = m_network->getCurrentTime();
+                assert(my_state.last_commit_date > 0);
+                assert(my_state.last_commit_received_date > 0);
+            } else {
+                my_state.last_commit = dir->getId();
+                my_state.last_commit_date = dir->getDate();
+                my_state.last_commit_received_date = m_network->getCurrentTime();
+                assert(my_state.last_commit_date > 0);
+                assert(my_state.last_commit_received_date > 0);
+            }
             //ask fs to update the file
             return m_file_storage->mergeDirectoryCommit(*dir, extra_db);
         }

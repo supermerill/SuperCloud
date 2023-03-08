@@ -24,7 +24,21 @@ namespace supercloud {
     std::optional<std::weak_ptr<FakeSocket>> FakeLocalNetwork::getLocalSocket(const EndPoint& endpoint) {
         auto it_weak_ptr_socket = std::find_if(computers.begin(), computers.end(), [&endpoint](const std::weak_ptr<FakeSocket>& sock_wptr) {
             auto sock = sock_wptr.lock();
-            return sock && sock->local_endpoint().address() == endpoint.address() && sock->local_endpoint().port() == endpoint.port();
+            if (sock && sock->get_local_ip_network() == "0.0.0") {
+                //only consider the machine-ip, not the network-ip
+                //TODO ipv6
+                std::string ip_sock = sock->local_endpoint().address();
+                size_t pos_last_dot = ip_sock.find_last_of('.') + 1;
+                assert(pos_last_dot < ip_sock.size());
+                ip_sock = ip_sock.substr(pos_last_dot, ip_sock.size() - pos_last_dot);
+                std::string ip_search = sock->local_endpoint().address();
+                pos_last_dot = ip_search.find_last_of('.') + 1;
+                assert(pos_last_dot < ip_search.size());
+                ip_search = ip_search.substr(pos_last_dot, ip_search.size() - pos_last_dot);
+                return ip_sock == ip_search && sock->local_endpoint().port() == endpoint.port();
+            } else {
+                return sock && sock->local_endpoint().address() == endpoint.address() && sock->local_endpoint().port() == endpoint.port();
+            }
             });
         if (it_weak_ptr_socket != computers.end()) {
             return std::optional<std::weak_ptr<FakeSocket>>{*it_weak_ptr_socket};
@@ -92,7 +106,7 @@ namespace supercloud {
             this->m_other_side->m_fifo.insert(this->m_other_side->m_fifo.end(), buffer.raw_array() + buffer.position(), buffer.raw_array() + buffer.limit());
             buffer.position(buffer.limit());
             write_count = buffer.position() - write_count;
-            log(this->local_endpoint().address() + ":" + this->local_endpoint().port() + " send " + write_count + " bytes to " + m_other_side->local_endpoint().address() + ":" + m_other_side->local_endpoint().port());
+            //log(this->local_endpoint().address() + ":" + this->local_endpoint().port() + " send " + write_count + " bytes to " + m_other_side->local_endpoint().address() + ":" + m_other_side->local_endpoint().port());
             this->m_other_side->m_fifo_available.release(write_count);
         }
     }
@@ -162,8 +176,10 @@ namespace supercloud {
 
     void FakeServerSocket::init(uint16_t port)  {
         ServerSocket::init(port);
-        listener.reset(new FakeSocket{ m_endpoint, EndPoint{"",0}, *this });
-        m_fake_network->addSocket(std::weak_ptr{ listener });
+        m_listener.reset(new FakeSocket{ m_endpoint, EndPoint{"",0}, *this });
+        for (auto& net : m_fake_networks) {
+            net->addSocket(std::weak_ptr{ m_listener });
+        }
     }
     std::shared_ptr<Socket> FakeServerSocket::listen() {
         //clean
@@ -188,7 +204,19 @@ namespace supercloud {
         return connection_socket;
     }
     bool FakeServerSocket::connect(FakeSocket* to_connect) {
-        std::optional<std::weak_ptr<FakeSocket>> listener = m_fake_network->getSocket(to_connect->request_endpoint());
+        assert(!m_fake_networks.empty());
+        //choose an interface
+        std::shared_ptr<FakeLocalNetwork> interface_to_use;
+        for (auto& net : m_fake_networks) {
+            if (to_connect->get_local_ip_network() == net->getNetworkIp()) {
+                interface_to_use = net;
+                break;
+            }
+        }
+        if (!interface_to_use) {
+            interface_to_use = m_fake_networks.front();
+        }
+        std::optional<std::weak_ptr<FakeSocket>> listener = interface_to_use->getSocket(to_connect->request_endpoint());
         if (listener.has_value()) {
             if (auto ptr = listener.value().lock(); ptr) {
                 ptr->ask_for_connect(to_connect);

@@ -11,7 +11,7 @@ namespace supercloud::test {
 		std::shared_ptr<ClusterManager> m_mana;
 		std::future<void> m_wait_for_connection;
 		std::promise<void> m_connection_notifier;
-		std::atomic_int connected = 0;
+		std::atomic_int m_connected = 0;
 		size_t goal = 1;
 		std::chrono::steady_clock::time_point m_start_time; //steady clock as we don't care of the real date,  only a good time
 		WaitConnection() {
@@ -34,10 +34,10 @@ namespace supercloud::test {
 
 		void receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) override {
 			if (message_id == *UnnencryptedMessageType::NEW_CONNECTION) {
-				if (++connected == goal) {
+				if (++m_connected == goal) {
 					m_connection_notifier.set_value();
 				}
-				if (connected >= goal) {
+				if (m_connected >= goal) {
 					m_mana->unregisterListener(message_id, ptr());
 				}
 			}

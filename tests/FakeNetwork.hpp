@@ -63,6 +63,24 @@ namespace supercloud {
         }
     };
 
+    //class FakeGateway : public FakeRouter {
+    //protected:
+    //    FakeGateway() : FakeRouter() {}
+    //    std::string m_ip_local;
+    //    std::string m_ip_global;
+    //    
+    //public:
+    //    static inline void createFakeGateway(std::shared_ptr<FakeLocalNetwork> local, std::shared_ptr<FakeLocalNetwork> global,
+    //        std::string ip_local, std::string ip_global) {
+    //        std::shared_ptr<FakeGateway> ptr = std::shared_ptr<FakeGateway>{ new FakeGateway() };
+    //        ptr->m_ip_local = ip_local;
+    //        ptr->m_ip_global = ip_local;
+    //        ptr->addNetwork(global);
+    //        ptr->addNetwork(local);
+    //        local->addRouter(ptr);
+    //    }
+    //};
+
 
     class FakeSocket : public Socket {
         //to create new port for new connections
@@ -116,13 +134,13 @@ namespace supercloud {
 
     class FakeServerSocket : public ServerSocket {
 
-        std::shared_ptr<FakeLocalNetwork> m_fake_network;
-        std::shared_ptr<FakeSocket> listener;
+        std::vector<std::shared_ptr<FakeLocalNetwork>> m_fake_networks;
+        std::shared_ptr<FakeSocket> m_listener;
         std::shared_ptr<FakeSocket> temp_new_socket;
         std::counting_semaphore wait_for_connect{ 0 };
         std::counting_semaphore wait_for_listen{ 0 };
     public:
-        FakeServerSocket(const std::string& ip, std::shared_ptr<FakeLocalNetwork> net) : ServerSocket() ,m_fake_network(net){
+        FakeServerSocket(const std::string& ip, std::vector<std::shared_ptr<FakeLocalNetwork>> nets) : ServerSocket() , m_fake_networks(nets){
             m_endpoint = { ip, m_endpoint.port() };
         }
         FakeServerSocket(const FakeServerSocket&) = delete; // can't copy
@@ -142,11 +160,12 @@ namespace supercloud {
 
     class FakeSocketFactory : public SocketFactory {
         std::string m_ip = "";
-        std::shared_ptr<FakeLocalNetwork> m_net;
+        std::vector<std::shared_ptr<FakeLocalNetwork>> m_nets;
     public:
-        void setNextInstanceConfiguration(const std::string& ip, std::shared_ptr<FakeLocalNetwork> net) { m_ip = ip; m_net = net; }
+        void setNextInstanceConfiguration(const std::string& ip, std::shared_ptr<FakeLocalNetwork> net) { m_ip = ip; m_nets.clear(); m_nets.push_back(net); }
+        void setNextInstanceConfiguration(const std::string& ip, std::vector<std::shared_ptr<FakeLocalNetwork>> nets) { m_ip = ip; m_nets = nets; }
         virtual std::shared_ptr<ServerSocket> create() override {
-            auto& ptr = std::shared_ptr<FakeServerSocket>{ new FakeServerSocket(m_ip, m_net) };
+            auto& ptr = std::shared_ptr<FakeServerSocket>{ new FakeServerSocket(m_ip, m_nets) };
             return ptr;
         }
     };

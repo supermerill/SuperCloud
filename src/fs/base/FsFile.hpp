@@ -6,6 +6,8 @@
 
 namespace supercloud {
 
+    // TODO: currently, the file size is stored as a "cached value of the size of all current chunks".
+    //          Is it interresting to store the size of each current chunk?
 	class FsFile : public FsObject {
 	protected:
 

@@ -8,35 +8,138 @@
 #include <functional>
 #include <sstream>
 
+
+#include "utils/Parameters.hpp"
 #include "network/PhysicalServer.hpp"
+#include "network/IdentityManager.hpp"
+#include "FakeNetwork.hpp"
+#include "WaitConnection.hpp"
+#include "fs/base/FsStorage.hpp"
+#include "fs/base/FsFile.hpp"
+#include "fs/base/FsDirectory.hpp"
+#include "fs/base/FsChunk.hpp"
+#include "fs/inmemory/FsStorageInMemory.hpp"
 #include "synch/SynchTreeMessageManager.hpp"
+#include "synch/SynchroDb.hpp"
 
 namespace supercloud::test::synchtree {
-
     typedef std::shared_ptr<SynchTreeMessageManager> MsgManaPtr;
 
     FsID newid() {
-        return FsElt::createId(rand_u16() % 1 == 0 ? FsType::FILE : FsType::DIRECTORY, rand_u63(), ComputerId(rand_u63()& COMPUTER_ID_MASK));
+        return FsElt::createId(rand_u16() % 1 == 0 ? FsType::FILE : FsType::DIRECTORY, rand_u63(), ComputerId(rand_u63() & COMPUTER_ID_MASK));
     }
 
+
+    typedef std::shared_ptr<PhysicalServer> ServPtr;
+    typedef std::shared_ptr<FakeLocalNetwork> NetPtr;
+    typedef std::shared_ptr<FsStorage> FsStoragePtr;
+    typedef std::shared_ptr<SynchroDb> SynchPtr;
+
+    InMemoryParameters createNewConfiguration() {
+        std::filesystem::path tmp_dir_path{ std::filesystem::temp_directory_path() /= std::tmpnam(nullptr) };
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        //create temp install dir
+        std::filesystem::create_directories(tmp_dir_path);
+
+        InMemoryParameters params_net;
+        params_net.setLong("ClusterId", std::hash<std::string>{}("clusternumber 1"));
+        params_net.setString("ClusterPassphrase", "passcluster1");
+
+        return params_net;
+    }
+
+    ServPtr createPeerFakeNet(InMemoryParameters& params_net, NetPtr& network, const std::string& my_ip, uint16_t listen_port = 0) {
+        ((FakeSocketFactory*)ServerSocket::factory.get())->setNextInstanceConfiguration(my_ip, network);
+
+        //launch first peer
+        ServPtr net = PhysicalServer::createAndInit(
+            std::make_unique<InMemoryParameters>(),
+            std::shared_ptr<InMemoryParameters>(new InMemoryParameters(params_net)));
+        if (listen_port > 100) {
+            net->listen(listen_port);
+        }
+        net->launchUpdater();
+
+        return net;
+    }
+
+    ServPtr createPeerFakeNets(InMemoryParameters& params_net, std::vector<NetPtr> networks, const std::string& my_ip, uint16_t listen_port = 0) {
+        ((FakeSocketFactory*)ServerSocket::factory.get())->setNextInstanceConfiguration(my_ip, networks);
+
+        //launch first peer
+        ServPtr net = PhysicalServer::createAndInit(
+            std::make_unique<InMemoryParameters>(),
+            std::shared_ptr<InMemoryParameters>(new InMemoryParameters(params_net)));
+        if (listen_port > 100) {
+            net->listen(listen_port);
+        }
+        net->launchUpdater();
+
+        return net;
+    }
+
+    ByteBuff stringToBuff(const std::string& str) {
+        return ByteBuff{ (uint8_t*)str.c_str(), str.size() };
+    }
+
+    std::string toString(ByteBuff&& buff) {
+        std::string str;
+        for (int i = 0; i < buff.limit(); i++) {
+            str.push_back(*((char*)(buff.raw_array() + i)));
+        }
+        return str;
+    }
+    inline ByteBuff readAll(FsChunk& chunk) {
+        ByteBuff buffer;
+        chunk.read(buffer, 0, chunk.size());
+        return buffer.flip();
+    }
+
+    class MyClock : public Clock {
+        ServPtr m_serv;
+    public:
+        MyClock(ServPtr serv) : m_serv(serv) {}
+        virtual DateTime getCurrrentTime() { return m_serv->getCurrentTime(); }
+    };
+    std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr> addFileSystem(ServPtr serv) {
+        std::shared_ptr<MyClock> clock = std::make_shared<MyClock>(serv);
+        FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), clock } };
+        //create synch
+        SynchPtr synch = SynchPtr{ new SynchroDb{} };
+        synch->init(fs, serv);
+        //create chunk message manager
+        MsgManaPtr chunk_mana = SynchTreeMessageManager::create(serv, fs, synch);
+        return std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr>{fs, synch, chunk_mana};
+    }
+
+    // for connecting to an existing cluster
+    void addEntryPoint(InMemoryParameters& param, const std::string& ip, uint16_t port) {
+        param.setString("PeerIp", ip);
+        param.setInt("PeerPort", port);
+        param.setBool("FirstConnection", true);
+    }
 	SCENARIO("Test SynchTreeMessageManager message write/read") {
 
         std::shared_ptr<PhysicalServer> serv = PhysicalServer::createForTests();
         ServerConnectionState m_state;
-        MsgManaPtr messageManager = SynchTreeMessageManager::create(serv);
+        MsgManaPtr messageManager = SynchTreeMessageManager::create(serv, {}, {});
 
         GIVEN("GET_TREE") {
-            SynchTreeMessageManager::TreeRequest data_1{ {newid(),newid(),newid()}, rand_u63(), rand_u63(), get_current_time_milis() };
+            SynchTreeMessageManager::TreeRequest data_1{ {newid(),newid(),newid()}, rand_u63()+1, rand_u63() + 1, get_current_time_milis() };
             ByteBuff buff_1 = messageManager->writeTreeRequestMessage(data_1);
-            SynchTreeMessageManager::TreeRequest data_2 = messageManager->readTreeRequestMessage(buff_1.rewind());
+            SynchTreeMessageManager::TreeRequest data_2 = messageManager->readTreeRequestMessage(buff_1);
             ByteBuff buff_2 = messageManager->writeTreeRequestMessage(data_2);
 
             REQUIRE(buff_1.rewind().getAll() == buff_2.rewind().getAll());
 
             REQUIRE(data_1.roots == data_2.roots);
             REQUIRE(data_1.depth == data_2.depth);
+            REQUIRE(data_1.depth != 0);
             REQUIRE(data_1.last_fetch_time == data_2.last_fetch_time);
+            REQUIRE(data_1.last_fetch_time != 0);
             REQUIRE(data_1.last_commit_received == data_2.last_commit_received);
+            REQUIRE(data_1.last_commit_received != 0);
         }
 
 
@@ -108,4 +211,192 @@ namespace supercloud::test::synchtree {
         }
 
 	}
+
+
+    SCENARIO("Test SynchTreeMessageManager getalll with fake network") {
+        ServerSocket::factory.reset(new FakeSocketFactory());
+        NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+        std::map < std::string, NetPtr > fakeNetworks;
+        std::string last_listen_ip = "";
+        uint16_t last_listen_port = 0;
+
+        //create 2 instance, network + fs + chunk manager (and synch object but not active)
+        InMemoryParameters param_serv1 = createNewConfiguration();
+        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
+        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv2 = createNewConfiguration();
+        addEntryPoint(param_serv2, "192.168.0.1", 4242);
+        ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
+        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        //init fs
+        //we don't init the root in the fs1, so we can test the "synch from uninit peer"
+
+        // connect both computer
+        std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1);
+        std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv2);
+        serv2->connect();
+
+        //wait connection
+        DateTime waiting1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting2 = waiter2->startWait().waitConnection(std::chrono::milliseconds(10000));
+        REQUIRE(waiting1 > 0);
+        REQUIRE(waiting2 > 0);
+        REQUIRE(serv1->getState().isConnected());
+        REQUIRE(serv2->getState().isConnected());
+        REQUIRE(serv1->getPeer()->isConnected());
+        REQUIRE(serv2->getPeer()->isConnected());
+
+        //update computerId;
+        fs1->setMyComputerId(serv1->getComputerId());
+        fs2->setMyComputerId(serv2->getComputerId());
+
+        //now create  dirs & files in the serv2
+        FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        REQUIRE(fs2_fic2->getCurrent().size() == 1);
+        FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+        log(std::string("dir1:") + (fs2_dir1->getId() % 1000));
+        log(std::string("dir11:") + (fs2_dir11->getId() % 1000));
+        log(std::string("dir111:") + (fs2_dir111->getId() % 1000));
+        log(std::string("fic2:") + (fs2_fic2->getId() % 1000));
+        log(std::string("fic12:") + (fs2_fic12->getId() % 1000));
+        log(std::string("fic112:") + (fs2_fic112->getId() % 1000));
+        log(std::string("fic1112:") + (fs2_fic1112->getId() % 1000));
+
+        REQUIRE(!fs1->hasLocally(fs2_dir11->getId()));
+        REQUIRE(fs2->hasLocally(fs2_dir11->getId()));
+        REQUIRE(!fs1->hasLocally(fs2_fic2->getId()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getId()));
+        REQUIRE(!fs1->hasLocally(fs2_fic2->getCurrent().front()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
+
+        //now connected, test a simple tree fetch
+        auto future_tree_answer = chunkmana1->fetchTree(fs1->getRoot());
+        std::future_status status = future_tree_answer.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_tree_answer.valid());
+        SynchTreeMessageManager::TreeAnswerPtr treeChanges = future_tree_answer.get();
+        REQUIRE(treeChanges);
+        REQUIRE(!treeChanges->created.empty());
+        REQUIRE(treeChanges->modified.empty());
+        REQUIRE(treeChanges->deleted.empty());
+
+        REQUIRE(fs1->hasLocally(fs2_dir11->getId()));
+        REQUIRE(fs2->hasLocally(fs2_dir11->getId()));
+        REQUIRE(fs1->hasLocally(fs2_fic2->getId()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getId()));
+
+        REQUIRE(fs1->checkFilesystem());
+        REQUIRE(fs2->checkFilesystem());
+    }
+
+    SCENARIO("Test SynchTreeMessageManager get sub-tree only (after first get) with fake network") {
+        ServerSocket::factory.reset(new FakeSocketFactory());
+        NetPtr net_192_168_0 = NetPtr{ new FakeLocalNetwork{"192.168.0"} };
+        std::map < std::string, NetPtr > fakeNetworks;
+        std::string last_listen_ip = "";
+        uint16_t last_listen_port = 0;
+
+        //create 2 instance, network + fs + chunk manager (and synch object but not active)
+        InMemoryParameters param_serv1 = createNewConfiguration();
+        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
+        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        InMemoryParameters param_serv2 = createNewConfiguration();
+        addEntryPoint(param_serv2, "192.168.0.1", 4242);
+        ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
+        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        //init fs
+        //we don't init the root in the fs1, so we can test the "synch from uninit peer"
+
+        // connect both computer
+        std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1);
+        std::shared_ptr<WaitConnection> waiter2 = WaitConnection::create(serv2);
+        serv2->connect();
+
+        //wait connection
+        DateTime waiting1 = waiter1->startWait().waitConnection(std::chrono::milliseconds(10000));
+        DateTime waiting2 = waiter2->startWait().waitConnection(std::chrono::milliseconds(10000));
+        REQUIRE(waiting1 > 0);
+        REQUIRE(waiting2 > 0);
+        REQUIRE(serv1->getState().isConnected());
+        REQUIRE(serv2->getState().isConnected());
+        REQUIRE(serv1->getPeer()->isConnected());
+        REQUIRE(serv2->getPeer()->isConnected());
+
+        //update computerId;
+        fs1->setMyComputerId(serv1->getComputerId());
+        fs2->setMyComputerId(serv2->getComputerId());
+
+        //now create  dirs & files in the serv2
+        FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
+
+        REQUIRE(!fs1->hasLocally(fs2_dir1->getId()));
+        REQUIRE(fs2->hasLocally(fs2_dir1->getId()));
+
+        //now connected, test a simple tree fetch
+        auto future_tree_answer = chunkmana1->fetchTree(fs1->getRoot());
+        std::future_status status = future_tree_answer.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_tree_answer.valid());
+        SynchTreeMessageManager::TreeAnswerPtr treeChanges = future_tree_answer.get();
+        REQUIRE(treeChanges);
+        REQUIRE(!treeChanges->created.empty());
+        REQUIRE(treeChanges->modified.empty());
+        REQUIRE(treeChanges->deleted.empty());
+
+        REQUIRE(fs1->hasLocally(fs2_dir1->getId()));
+        REQUIRE(fs2->hasLocally(fs2_dir1->getId()));
+
+        //create more directories & files
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        REQUIRE(fs2_fic2->getCurrent().size() == 1);
+        FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
+        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        //now connected, test a sub-tree fetch
+        future_tree_answer = chunkmana1->fetchTree(fs2_dir1->getId());
+        status = future_tree_answer.wait_for(std::chrono::milliseconds(10000));
+        REQUIRE(status == std::future_status::ready);
+        REQUIRE(future_tree_answer.valid());
+        treeChanges = future_tree_answer.get();
+        REQUIRE(treeChanges);
+        REQUIRE(!treeChanges->created.empty());
+        REQUIRE(!treeChanges->modified.empty());
+        REQUIRE(treeChanges->deleted.empty());
+
+        REQUIRE(fs1->hasLocally(fs2_dir11->getId()));
+        REQUIRE(fs2->hasLocally(fs2_dir11->getId()));
+        REQUIRE(!fs1->hasLocally(fs2_fic2->getId()));
+        REQUIRE(fs2->hasLocally(fs2_fic2->getId()));
+
+        REQUIRE(fs1->checkFilesystem());
+        REQUIRE(fs2->checkFilesystem());
+    }
 }

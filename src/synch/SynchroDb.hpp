@@ -126,7 +126,7 @@ namespace supercloud {
         /// </summary>
         /// <param name="new_commit"></param>
         /// <param name="commit_time"></param>
-        bool mergeCommit(const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db);
+        bool mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db);
 
         void load(std::filesystem::path& file);
         void save(std::filesystem::path& file);
