@@ -17,6 +17,7 @@ namespace supercloud{
 
 class PhysicalServer;
 
+constexpr size_t RSA_KEY_SIZE = 3072;
 	/**
 	 *
 	 * This class if the manager of the peers we kind of trust in the network.
@@ -24,6 +25,20 @@ class PhysicalServer;
 	 */
 class IdentityManager {
 public:
+	enum class EncryptionType : uint8_t{
+		UNKNOWN,
+		NO_ENCRYPTION,
+		NAIVE,
+		RSA,
+		AES
+	};
+	struct PublicKeyHolder {
+		EncryptionType type = EncryptionType::NAIVE;
+		std::vector<uint8_t> raw_data;
+		inline bool operator==(const PublicKeyHolder& other) const { return type == other.type && raw_data == other.raw_data; }
+		inline bool operator!=(const PublicKeyHolder& other) const { return !this->operator==(other); }
+		//auto operator<=>(const PublicKeyHolder&) const = default; //c++20
+	};
 	struct PeerConnection {
 		std::string address;
 		uint16_t port;
@@ -36,7 +51,7 @@ public:
 	struct PeerData {
 		// the registered peer. may be in connection or connected.
 		PeerPtr peer;
-		PublicKey rsa_public_key;
+		PublicKeyHolder rsa_public_key;
 		SecretKey aes_key;
 		// The key is an ip (only the network part) and the value is the ip/adress where we succeffuly connect to it.
 		// If we never found a way to connect to it, it's empty.
@@ -51,10 +66,11 @@ public:
 		DEFINITIVE = 2,
 	};
 protected:
+
 	std::mutex db_file_mutex;
 
-	PrivateKey privateKey;
-	PublicKey publicKey;
+	PrivateKey m_private_key;
+	PublicKeyHolder m_public_key;
 
 	// A fake peer to store our information
 	PeerPtr m_myself;
@@ -63,7 +79,7 @@ protected:
 	mutable std::mutex m_loaded_peers_mutex;
 	PeerList m_loaded_peers;
 	mutable std::mutex tempPubKey_mutex;
-	std::unordered_map<PeerId, PublicKey> tempPubKey; // unidentified pub key
+	std::unordered_map<PeerId, PublicKeyHolder> tempPubKey; // unidentified pub key
 	mutable std::mutex m_peer_data_mutex;
 	std::unordered_map<PeerPtr, PeerData> m_peer_2_peerdata;
 	PhysicalServer& serv;
@@ -76,9 +92,14 @@ protected:
 	std::shared_ptr<Parameters> m_install_parameters; // optional, to get installation information, to create the m_parameters the first launch.
 	std::unique_ptr<Parameters> m_parameters; // the Parameters inside is 'mutable' as it can mute to serialize, even if we don't change our data.
 	uint64_t clusterId = NO_CLUSTER_ID; // the id to identify the whole cluster
-	std::string passphrase = "no protection"; //the passphrase of the cluster
+	std::string m_passphrase = "no protection"; //the passphrase of the cluster
+	EncryptionType m_encryption_type = EncryptionType::UNKNOWN; // the encryption used by the cluster (should be aes), can be none for testing purpose
 
 	void create_from_install_info();
+	EncryptionType getDefaultAESEncryptionType();
+	EncryptionType getDefaultRSAEncryptionType();
+	void encrypt(std::vector<uint8_t>& data, const PublicKeyHolder& peer_pub_key);
+	bool decrypt(std::vector<uint8_t>& data, const PublicKeyHolder& peer_pub_key); // return false if the message is corrupted or wrong pub/priv key
 public:
 	IdentityManager(PhysicalServer& serv, std::unique_ptr<Parameters>&& parameters) : serv(serv), m_parameters(std::move(parameters)) {
 		m_myself = Peer::create(serv, "", 0, Peer::ConnectionState::US);
@@ -112,12 +133,12 @@ public:
 	bool setPeerData(const PeerData& original, const PeerData& new_data);
 
 	int64_t getTimeChooseId(){ return timeChooseId; }
-	PublicKey getPublicKey() const { return publicKey; }
+	PublicKey getPublicKey() const { return m_public_key.raw_data; }
 	PublicKey getPublicKey(PeerPtr key) const {
 		{ std::lock_guard lock{ this->m_peer_data_mutex };
 			auto it = m_peer_2_peerdata.find(key);
 			if (it != m_peer_2_peerdata.end())
-				return it->second.rsa_public_key;
+				return it->second.rsa_public_key.raw_data;
 			return PublicKey{};
 		}
 	}
@@ -140,13 +161,13 @@ public:
 	}
 
 	// create our keys
-	void createNewPublicKey();
+	void createNewPublicKey(EncryptionType type);
 	//static PrivateKey createPrivKey(const std::vector<uint8_t>& datas);
 
 	void newClusterId() { clusterId = rand_u63(); }
 
 	void setPassword(const std::string& pass) {
-		passphrase = pass;
+		m_passphrase = pass;
 		requestSave();
 	}
 
@@ -174,7 +195,7 @@ public:
 	std::string createMessageForIdentityCheck(Peer& peer, bool forceNewOne);
 
 
-	ByteBuff getIdentityDecodedMessage(const PublicKey& key, const ByteBuff& buffIn);
+	ByteBuff getIdentityDecodedMessage(const PublicKeyHolder& key, const ByteBuff& buffIn);
 
 	enum class Identityresult : uint8_t { NO_PUB, BAD, OK };
 	//send our public key to the peer, with the message encoded
@@ -188,6 +209,9 @@ public:
 	//public Cipher getSecretCipher(Peer p, int mode);
 
 	//ByteBuff blockCipher(byte[] bytes, int mode, Cipher cipher);
+
+	void encodeMessageSecret(ByteBuff& message, PeerPtr peer);
+	void decodeMessageSecret(ByteBuff& message, PeerPtr peer);
 
 	void requestSecretKey(PeerPtr peer);
 
@@ -203,7 +227,20 @@ public:
 
 	void sendAesKey(PeerPtr peer, uint8_t aesState);
 
+	/// <summary>
+	/// use the message to check if the aes key sent to us is acceptable.
+	/// This can lead to another aes message, as long as we can't agree on a same aes key.
+	/// </summary>
+	/// <param name="peer"></param>
+	/// <param name="message"></param>
+	/// <returns>true if the aes key is valid and accepted by both of us (as much as possible)</returns>
 	bool receiveAesKey(PeerPtr peer, const ByteBuff& message);
+
+	EncryptionType getEncryptionType() { return m_encryption_type; }
+protected:
+	void setEncryption(EncryptionType type) {
+		this->m_encryption_type = type;
+	}
 
 };
 

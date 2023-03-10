@@ -41,9 +41,9 @@ std::shared_ptr<PhysicalServer> createPeer(const std::string& name, uint16_t lis
 	//}
 	//params_server_db.save();
 
-	Parameters params_net(tmp_dir_path / "network.properties");
-	params_net.setLong("ClusterId", cluster_id);
-	params_net.setString("ClusterPassphrase", cluster_passphrase);
+	std::unique_ptr<ConfigFileParameters> params_net = std::unique_ptr<ConfigFileParameters>{ new ConfigFileParameters(tmp_dir_path / "network.properties") };
+	params_net->setLong("ClusterId", cluster_id);
+	params_net->setString("ClusterPassphrase", cluster_passphrase);
 
 	// for connecting to an existing cluster
 		//params_net.setString("PeerIp", "127.0.01");
@@ -56,7 +56,7 @@ std::shared_ptr<PhysicalServer> createPeer(const std::string& name, uint16_t lis
 		
 
     //launch first peer
-	std::shared_ptr<PhysicalServer> net = PhysicalServer::createAndInit(tmp_dir_path);
+	std::shared_ptr<PhysicalServer> net = PhysicalServer::createAndInit(std::move(params_net), {});
 	net->listen(listen_port);
 	net->launchUpdater();
 
@@ -70,17 +70,17 @@ std::shared_ptr<PhysicalServer> createPeer2(const std::string& name, uint16_t li
 	std::filesystem::path tmp_dir_path{ std::filesystem::temp_directory_path() /= std::tmpnam(nullptr) };
 	std::filesystem::create_directories(tmp_dir_path);
 
-	Parameters params_net(tmp_dir_path / "network.properties");
-	params_net.setLong("ClusterId", cluster_id);
-	params_net.setString("ClusterPassphrase", cluster_passphrase);
+	std::unique_ptr<ConfigFileParameters> params_net = std::unique_ptr<ConfigFileParameters>{ new ConfigFileParameters(tmp_dir_path / "network.properties") };
+	params_net->setLong("ClusterId", cluster_id);
+	params_net->setString("ClusterPassphrase", cluster_passphrase);
 
 	// for connecting to an existing cluster
-	params_net.setString("PeerIp", "127.0.0.1");
-	params_net.setLong("PeerPort", 4242L);
-	params_net.setBool("FirstConnection", true);
+	params_net->setString("PeerIp", "127.0.0.1");
+	params_net->setLong("PeerPort", 4242L);
+	params_net->setBool("FirstConnection", true);
 
 	//launch first peer
-	std::shared_ptr<PhysicalServer> net = PhysicalServer::createAndInit(tmp_dir_path);
+	std::shared_ptr<PhysicalServer> net = PhysicalServer::createAndInit(std::move(params_net), {});
 	net->listen(listen_port);
 	net->launchUpdater();
 

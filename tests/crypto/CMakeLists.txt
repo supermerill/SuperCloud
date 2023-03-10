@@ -1,18 +1,22 @@
 get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 
+configure_file(../../src/network/IdentityManagerCrypto.cpp IdentityManagerCrypto.cpp COPYONLY)
+
+include_directories(".")
+
 add_executable(${_TEST_NAME}_tests
-    test_connection.cpp
-    test_connection_fake_network.cpp
-    test_connection_messages.cpp
-    ../WaitConnection.hpp
-    ../FakeNetwork.hpp
-    ../FakeNetwork.cpp
+    test_cryptopp.cpp
+    IdentityManager.hpp
+    IdentityManagerCrypto.cpp
+    ../../src/utils/ByteBuff.hpp
+    ../../src/utils/ByteBuff.cpp
+#    ../../src/utils/Utils.hpp
+#    ../../src/utils/Utils.cpp
     )
 
-    
 target_link_libraries(${_TEST_NAME}_tests 
     test_common
-    libsupercloud 
+    cryptopp::cryptopp
 )
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 

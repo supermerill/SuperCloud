@@ -31,6 +31,8 @@ namespace supercloud::test {
 		ConfigFileParameters params_net(tmp_dir_path / "network.properties");
 		params_net.setLong("ClusterId", std::hash<std::string>{}("clusternumber 1"));
 		params_net.setString("ClusterPassphrase", "passcluster1");
+		params_net.setString("SecretKeyType", "NONE");
+		params_net.setString("PubKeyType", "NONE");
 
 		return params_net;
 	}
@@ -457,7 +459,7 @@ SCENARIO("testing the simple connection between clients and a server in the same
 				for (size_t with = check + 1; with < computers.size(); with++) {
 					auto data_with = computers[check]->getIdentityManager().getPeerData(computers[check]->getIdentityManager().getLoadedPeer(computers[with]->getComputerId()));
 					REQUIRE(bool(data_with.peer));
-					REQUIRE(!data_with.rsa_public_key.empty());
+					REQUIRE(!data_with.rsa_public_key.raw_data.empty());
 					//REQUIRE(data_with.private_interface.has_value());
 				}
 			}
@@ -539,7 +541,7 @@ SCENARIO("testing the simple connection between clients and a server in the same
 						auto data_with = computers[check]->getIdentityManager().getPeerData(computers[check]->getIdentityManager().getLoadedPeer(computers[with]->getComputerId()));
 						std::lock_guard lock{ *loglock() };
 						REQUIRE(bool(data_with.peer));
-						REQUIRE(!data_with.rsa_public_key.empty());
+						REQUIRE(!data_with.rsa_public_key.raw_data.empty());
 						REQUIRE(data_with.private_interface.has_value());
 					}
 				}

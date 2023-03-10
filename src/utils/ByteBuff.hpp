@@ -140,8 +140,13 @@ namespace supercloud {
 		ByteBuff& put(const uint8_t b);
 
 		std::vector<uint8_t> get(const size_t nbElt) const;
+		/// <summary>
+		/// Get all data from the current position to the end of the buffer.
+		/// The new position of the iterator is now at the end.
+		/// </summary>
+		/// <returns>a vector with limit()-position() bytes</returns>
 		std::vector<uint8_t> getAll() const;
-		ByteBuff& put(std::vector<uint8_t>);
+		ByteBuff& put(const std::vector<uint8_t>&);
 
 		/**
 		 * Put data into dest (from position).
@@ -222,10 +227,9 @@ namespace supercloud {
 		 */
 		ByteBuff subBuff(const size_t start, const size_t length) const;
 
-		/**
-		 * Clear it. pos and limit are now at 0.
-		 * @return
-		 */
+		/// <summary>
+		///  Clear it. (just set position and limit to 0).
+		/// </summary>
 		ByteBuff& reset();
 
 

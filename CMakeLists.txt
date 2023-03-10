@@ -5,6 +5,14 @@ project(supercloud)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+
+# ---- Add dependencies via CPM ----
+# see https://github.com/TheLartians/CPM.cmake for more info
+include("cmake/CPM.cmake")
+
+# ---- Speedup build using ccache (needs CPM) ----
+include("cmake/FasterBuild.cmake")
+
 # --- boost ---
 set(Boost_USE_STATIC_LIBS ON)
 set(MINIMUM_BOOST_VERSION "1.66.0")
@@ -49,6 +57,30 @@ set(LIBDIR_BIN ${CMAKE_CURRENT_BINARY_DIR}/src)
 # For the bundled boost libraries (boost::nowide)
 include_directories(${LIBDIR})
 
+# add cryptopp lib
+set(CRYPTOPP_INCLUDE_PREFIX "cryptopp")
+cpmaddpackage(
+  NAME
+  cryptopp-cmake
+  GIT_REPOSITORY
+  https://github.com./abdes/cryptopp-cmake
+  GIT_TAG
+  master
+  OPTIONS
+  "CRYPTOPP_BUILD_TESTING OFF"
+  "CRYPTOPP_INSTALL ON"
+  "CRYPTOPP_INCLUDE_PREFIX ${CRYPTOPP_INCLUDE_PREFIX}")
+#set(CRYPTOPP_CMAKE_INSTALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/deps/cryptopp-cmake")
+#include_directories("deps/build/include")
+#link_directories(lib/cryptopp/x64/lib)
+#add_library(cryptopp STATIC IMPORTED)
+#set_target_properties(cryptopp PROPERTIES IMPORTED_LOCATION_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/libd/cryptopp.lib")
+#set_target_properties(cryptopp PROPERTIES IMPORTED_LOCATION_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/lib/cryptopp.lib")
+#set_target_properties(cryptopp PROPERTIES IMPORTED_LOCATION_MINSIZEREL "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/lib/cryptopp.lib")
+#set_target_properties(cryptopp PROPERTIES IMPORTED_LOCATION_RELWITHDEBINFO "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/lib/cryptopp.lib")
+#set_target_properties(cryptopp PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/include")
+
+#add_subdirectory(deps/cryptopp-cmake)
 add_subdirectory(src)
 add_subdirectory(tests)
 add_subdirectory(exe)

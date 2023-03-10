@@ -45,6 +45,8 @@ namespace supercloud::test::synchtree {
         InMemoryParameters params_net;
         params_net.setLong("ClusterId", std::hash<std::string>{}("clusternumber 1"));
         params_net.setString("ClusterPassphrase", "passcluster1");
+        params_net.setString("SecretKeyType", "NONE");
+        params_net.setString("PubKeyType", "NONE");
 
         return params_net;
     }
@@ -268,13 +270,6 @@ namespace supercloud::test::synchtree {
         fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
         FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
         fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
-        log(std::string("dir1:") + (fs2_dir1->getId() % 1000));
-        log(std::string("dir11:") + (fs2_dir11->getId() % 1000));
-        log(std::string("dir111:") + (fs2_dir111->getId() % 1000));
-        log(std::string("fic2:") + (fs2_fic2->getId() % 1000));
-        log(std::string("fic12:") + (fs2_fic12->getId() % 1000));
-        log(std::string("fic112:") + (fs2_fic112->getId() % 1000));
-        log(std::string("fic1112:") + (fs2_fic1112->getId() % 1000));
 
         REQUIRE(!fs1->hasLocally(fs2_dir11->getId()));
         REQUIRE(fs2->hasLocally(fs2_dir11->getId()));

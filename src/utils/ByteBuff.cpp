@@ -107,7 +107,7 @@ std::vector<uint8_t> ByteBuff::getAll() const
     return ByteBuff::get(this->m_limit - this->m_position);
 }
 
-ByteBuff& ByteBuff::put(std::vector<uint8_t> src)
+ByteBuff& ByteBuff::put(const std::vector<uint8_t>& src)
 {
     expand(src.size());
     std::copy(src.begin(), src.end(), this->m_buffer.get() + this->m_position);

@@ -45,6 +45,8 @@ namespace supercloud::test::syncchunk {
         InMemoryParameters params_net;
         params_net.setLong("ClusterId", std::hash<std::string>{}("clusternumber 1"));
         params_net.setString("ClusterPassphrase", "passcluster1");
+        params_net.setString("SecretKeyType", "NONE");
+        params_net.setString("PubKeyType", "NONE");
 
         return params_net;
     }

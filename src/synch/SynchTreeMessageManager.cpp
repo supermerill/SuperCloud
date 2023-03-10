@@ -44,6 +44,9 @@ namespace supercloud {
 		} else if (message_id == *SynchMessagetype::SEND_HOST_PROPERTIES) {
 			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_HOST_PROPERTIES from " + sender->getPeerId());
 			//TODO
+		} else if (message_id == *UnnencryptedMessageType::TIMER_MINUTE) {
+			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE TIMER_MINUTE from " + sender->getPeerId());
+			//TODO
 		}
 	}
 
