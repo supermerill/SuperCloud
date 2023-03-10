@@ -53,6 +53,7 @@ public:
 		PeerPtr peer;
 		PublicKeyHolder rsa_public_key;
 		SecretKey aes_key;
+		std::shared_ptr<void> aes_encoder; // cached encoder, to avoid recreating it each time.
 		// The key is an ip (only the network part) and the value is the ip/adress where we succeffuly connect to it.
 		// If we never found a way to connect to it, it's empty.
 		std::vector<PeerConnection> public_interfaces;
@@ -146,10 +147,11 @@ public:
 	//setters
 	void removeBadPeer(PeerPtr badPeer) {
 		{std::lock_guard lock{ m_loaded_peers_mutex };
-			for (auto it = m_loaded_peers.begin(); it != m_loaded_peers.end(); ++it) {
+			foreach(it , m_loaded_peers) {
 				if (*it == badPeer) {
-					it->get()->close();
-					m_loaded_peers.erase(it);
+					log(std::to_string(this->getSelfPeer()->getPeerId() % 100) + " remove bad peer from idmana: " + std::to_string(badPeer->getPeerId() % 100));
+					(*it)->close();
+					it.erase();
 					break;
 				}
 			}
@@ -163,6 +165,7 @@ public:
 	// create our keys
 	void createNewPublicKey(EncryptionType type);
 	//static PrivateKey createPrivKey(const std::vector<uint8_t>& datas);
+	SecretKey createNewSecretKey(EncryptionType type);
 
 	void newClusterId() { clusterId = rand_u63(); }
 
@@ -210,8 +213,15 @@ public:
 
 	//ByteBuff blockCipher(byte[] bytes, int mode, Cipher cipher);
 
-	void encodeMessageSecret(ByteBuff& message, PeerPtr peer);
-	void decodeMessageSecret(ByteBuff& message, PeerPtr peer);
+	/// <summary>
+	/// 
+	/// </summary>
+	/// <param name="message"></param>
+	/// <param name="peer"></param>
+	/// <param name="message_counter">a counter that is unique per message sent, so you can use it to  change the iv a bit.</param>
+	/// <returns> extra message to send before the encrypted message</returns>
+	void encodeMessageSecret(ByteBuff& message, PeerPtr peer, size_t message_counter);
+	void decodeMessageSecret(ByteBuff& message, PeerPtr peer, size_t message_counter);
 
 	void requestSecretKey(PeerPtr peer);
 
@@ -238,9 +248,7 @@ public:
 
 	EncryptionType getEncryptionType() { return m_encryption_type; }
 protected:
-	void setEncryption(EncryptionType type) {
-		this->m_encryption_type = type;
-	}
+	void setEncryption(EncryptionType type) { this->m_encryption_type = type; }
 
 };
 

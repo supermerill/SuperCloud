@@ -1,7 +1,8 @@
 
-//#define CATCH_CONFIG_DISABLE
+#define CATCH_CONFIG_DISABLE
 
-#include <catch_main.hpp>
+//#include <catch_main.hpp> // main is in test_connection_message
+#include <catch2/catch.hpp>
 #include "utils/Utils.hpp"
 #include "utils/ByteBuff.hpp"
 #include "utils/Parameters.hpp"
@@ -16,7 +17,7 @@
 #include "FakeNetwork.hpp"
 #include "WaitConnection.hpp"
 
-namespace supercloud::test {
+namespace supercloud::test::fake_network_tests {
 
 	typedef std::shared_ptr<PhysicalServer> ServPtr;
 	typedef std::shared_ptr<FakeLocalNetwork> NetPtr;
@@ -210,6 +211,9 @@ namespace supercloud::test {
 				REQUIRE(client_software[1]->getState().isConnected());
 				REQUIRE(client_software[1]->getPeer()->isConnected());
 
+				//wait a bit for clusterAdminMessageManager to be emitted
+				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
 				//connected, stop message read
 				std::vector<std::lock_guard<std::mutex>*> locks;
 				for (PeerPtr peer : serv->getPeersCopy()) {
@@ -323,6 +327,9 @@ namespace supercloud::test {
 				//REQUIRE(waiting_cli2 < 100);
 				REQUIRE(serv_res42->getState().isConnected());
 				REQUIRE(serv_res42->getPeer()->isConnected());
+
+				//wait a bit for clusterAdminMessageManager to be emitted
+				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
 				//connected, stop message read
 				std::vector<std::lock_guard<std::mutex>*> locks;

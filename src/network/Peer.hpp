@@ -83,8 +83,9 @@ namespace supercloud {
 		std::shared_ptr<Socket> m_socket_wait_to_delete = nullptr;
 		//std::unique_ptr<std::istream> streamIn;
 		mutable std::mutex socket_read_barrier; // for tests
-		std::mutex socket_read_mutex;
-		std::mutex socket_write_mutex;
+		std::mutex m_socket_read_mutex;
+		std::mutex m_socket_write_mutex;
+		size_t m_writing_message_counter = 0; // an id for each message sent. used by crypto
 		//std::unique_ptr<std::ostream> streamOut;
 
 		/// <summary>
@@ -173,9 +174,16 @@ namespace supercloud {
 		void startListen();
 
 		void writeMessagePriorityClear(uint8_t messageId, ByteBuff& message);
+
+		/// <summary>
+		/// Write the message on the stream.
+		/// Note that the message buffer can be modified. It's like a &&.
+		/// </summary>
+		/// <param name="messageId"></param>
+		/// <param name="message"></param>
 		void writeMessage(uint8_t messageId, ByteBuff& message = ByteBuff{});
 
-		void readMessage();
+		bool readMessage();
 
 		// for testing: pause reading
 		std::mutex& lockSocketRead() const;

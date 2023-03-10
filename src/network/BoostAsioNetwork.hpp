@@ -18,7 +18,7 @@ namespace supercloud {
         BoostAsioSocket(const BoostAsioSocket&) = delete; // can't copy
         BoostAsioSocket& operator=(const BoostAsioSocket&) = delete; // can't copy
         virtual ~BoostAsioSocket() {
-            log("ERROR, closing SOCKET");
+            log("WARNING, closing SOCKET");
         }
         virtual EndPoint local_endpoint() const override;
         virtual EndPoint remote_endpoint() const override;

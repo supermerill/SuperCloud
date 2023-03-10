@@ -109,7 +109,8 @@ namespace supercloud {
 		/// </summary>
 		NEW_CONNECTION,
 		/// <summary>
-		/// Fake message to notify listener for closing the socket / a connection with a peer.
+		/// Used to notify the other side taht we close the pipe.
+		/// Used to notify listener for closing the socket / a connection with a peer.
 		/// The reason can be get from the peer object
 		/// </summary>
 		CONNECTION_CLOSED,
@@ -149,7 +150,7 @@ namespace supercloud {
 		mutable std::mutex mutex;
 		std::set<ComputerId> m_connected;
 		bool has_connection = false;
-		bool is_disconnecting = false;
+		bool is_disconnecting = false; // == closed,  when turned to true it can't go back to false;
 		std::vector<std::string> logmsg;
 		bool m_is_computer_id_problematic = false;
 	public:
@@ -160,6 +161,7 @@ namespace supercloud {
 		inline size_t getConnectionsCount() const { return m_connected.size(); }
 		inline void setOurComputerIdInvalid() { m_is_computer_id_problematic = true; }
 		inline bool isOurComputerIdProblematic() const { return m_is_computer_id_problematic; }
+		inline bool isClosed() const { return is_disconnecting; }
 
 		inline void beganConnection() {
 			std::lock_guard lock{ mutex };

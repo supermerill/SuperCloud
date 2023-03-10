@@ -82,6 +82,7 @@ namespace supercloud {
             ComputerId computer_id;
             PeerId last_peer_id;
             PublicKey rsa_public_key;
+            IdentityManager::EncryptionType rsa_type;
             Peer::ConnectionState current_state;
             //interface = pair ip-port
             std::vector<std::pair<std::string, uint16_t>> published_interfaces;

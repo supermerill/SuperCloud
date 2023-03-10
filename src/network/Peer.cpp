@@ -37,9 +37,13 @@ namespace supercloud {
 			return;
 		}
 		try {
-			while (true) {
-				readMessage();
+			bool ok = true;
+			while (ok) {
+				log(std::to_string(myServer.getPeerId() % 100) + "  read next message");
+				ok = readMessage();
+				log(std::to_string(myServer.getPeerId() % 100) + " end reading? "+(ok?"NO, continue":"YES, STOP"));
 			}
+			log(std::to_string(myServer.getPeerId() % 100) + " end reading!");
 		}
 		catch (std::exception e1) {
 			error(std::to_string(myServer.getPeerId() % 100) + "ERROR: " + e1.what());
@@ -121,7 +125,9 @@ namespace supercloud {
 			myServer.propagateMessage(this->ptr(), *UnnencryptedMessageType::GET_SERVER_ID, ByteBuff{});
 
 			// read sendServerId from the other peer
+			log(std::to_string(myServer.getPeerId() % 100) + "ask for reading sendServerId");
 			readMessage();
+			log(std::to_string(myServer.getPeerId() % 100) + "end ask for reading sendServerId");
 
 			// set that we are connecting
 			aliveAndSet.store(true);
@@ -149,42 +155,56 @@ namespace supercloud {
 	//BUGGY!!!! used by ping.
 	//TODO: write a branch to allow the read() to read that.
 	//synchronized
-	void Peer::writeMessagePriorityClear(uint8_t messageId, ByteBuff& message) {
+	void Peer::writeMessagePriorityClear(uint8_t message_id, ByteBuff& message) {
 		if (!m_socket || !m_socket->is_open())
 			return;
 		//if (message.limit() == 0) {
 		//	log(std::string("Warn : emit null message, id :") + int32_t(messageId)+" : "+messageId_to_string(messageId));
-		//}
 
-		size_t encodedMsgLength = message.available();
-
-		ByteBuff fullData;
-		fullData.put(uint8_t(5))
-			.put(uint8_t(5))
-			.put(uint8_t(5))
-			.put(uint8_t(5))
-			.put(*UnnencryptedMessageType::PRIORITY_CLEAR)
-			.put(*UnnencryptedMessageType::PRIORITY_CLEAR)
-			.put(messageId);
-		fullData.putInt(int32_t(encodedMsgLength + 1))
-			.putInt(int32_t(encodedMsgLength + 1));
-		fullData.put(message);
-		fullData.flip();
-		log(std::to_string( this->myServer.getPeerId() % 100 ) + " write socket: " + m_socket->is_open() + "\n");
-		{ std::lock_guard lock_socket{ socket_write_mutex };
-			if (isConnected() || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
-				m_socket->write(fullData);
-			}
-		}
 		if (message.position() != 0) {
 			msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
 		}
-		msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("WRITE PRIORITY MESSAGE : ") + messageId + " : " + (message.position() >= message.limit() ? "null" : ""+(message.available())));
-		
+		assert(message.position() == 0);
+		message.rewind();
+
+		size_t message_counter = 0;
+		{ std::lock_guard lock_socket{ m_socket_write_mutex };
+			message_counter = ++m_writing_message_counter;
+		}
+
+		ByteBuff header;
+		header.put(uint8_t(5))
+			.put(uint8_t(5))
+			.put(uint8_t(5))
+			.put(uint8_t(5))
+			.put(*UnnencryptedMessageType::PRIORITY_CLEAR)
+			.put(message_id);
+		size_t pos_sizes = header.position();
+		header.put(0)
+			.putSize(message_counter)
+			.putSize(message.limit())
+			.putSize(message.limit());
+		//put the size of sizes
+		header.position(pos_sizes);
+		header.put(header.limit() - pos_sizes - 1/*do not count pos_sizes byte*/);
+		header.position(pos_sizes).put(message_id);
+		header.rewind();
+
+		log(std::to_string( this->myServer.getPeerId() % 100 ) + " write PRIORITY_CLEAR socket: " + m_socket->is_open() + "\n");
+		{ std::lock_guard lock_socket{ m_socket_write_mutex };
+			if (isConnected() || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
+				m_socket->write(header);
+				if (message.available() > 0) {
+					assert(message.position() == 0);
+					message.rewind();
+					m_socket->write(message);
+				}
+			}
+		}
 	}
 
 	//synchronized
-	void Peer::writeMessage(uint8_t messageId, ByteBuff& message) {
+	void Peer::writeMessage(uint8_t message_id, ByteBuff& message) {
 		if (!m_socket || !m_socket->is_open())
 			return;
 
@@ -196,59 +216,60 @@ namespace supercloud {
 		//	msg(std::string("Warn : emit null message, id :") + int32_t(messageId) + " : " + messageId_to_string(messageId));
 		//}
 		//try {
+			size_t message_counter = 0;
+			{ std::lock_guard lock_socket{ m_socket_write_mutex };
+				message_counter = ++m_writing_message_counter;
+			}
+
+			//check buffer position
+			if (message.position() != 0) {
+				msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
+			}
+			assert(message.position() == 0);
+			message.rewind();
 
 			//encode mesage
-			//if (encoder == null) encoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.ENCRYPT_MODE);
-			size_t available = message.available();
-			uint8_t* encodedMsg = nullptr;
-			size_t encodedMsgLength = 0;
-			if (messageId > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
+			if (message_id > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
 				if (this->isConnected()) {
 					if (message.available() > 0) {
-						//encodedMsg = encoder.doFinal(message.array(), message.position(), message.limit());
-						// TODO: naive cipher: xor with a passphrase
-						encodedMsg = message.raw_array() + message.position();
-						encodedMsgLength = size_t(message.available());
+						myServer.getIdentityManager().encodeMessageSecret(message, ptr(), message_counter);
 					}
 				} else {
-					error(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + "Error, tried to send a " + messageId +":" + messageId_to_string(messageId) + " message when we don't have a aes key!");
+					error(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + "Error, tried to send a " + message_id +":" + messageId_to_string(message_id) + " message when we don't have a aes key!");
 					return;
-				}
-			} else {
-				if (message.available() > 0) {
-					encodedMsg = message.raw_array() + message.position();
-					encodedMsgLength = size_t(message.limit()) - message.position();
 				}
 			}
 
 			//std::ostream& out = *this->streamOut;
 
-			ByteBuff fullData;
-			fullData.put(uint8_t(5))
+			ByteBuff header;
+			header.put(uint8_t(5))
 				.put(uint8_t(5))
 				.put(uint8_t(5))
 				.put(uint8_t(5))
-				.put(messageId)
-				.put(messageId);
-			fullData.putInt(int32_t(encodedMsgLength))
-				.putInt(int32_t(encodedMsgLength));
-			if (encodedMsgLength > 0) {
-				fullData.put(encodedMsg, encodedMsgLength);
-			}
-			fullData.flip();
-			{ std::lock_guard lock_socket{ socket_write_mutex };
+				.put(message_id)
+				.put(message_id);
+			size_t pos_sizes = header.position();
+			header.put(0)
+				.putSize(message_counter)
+				.putSize(message.limit())
+				.putSize(message.limit());
+			//put the size of sizes
+			header.position(pos_sizes);
+			header.put(header.limit() - pos_sizes - 1/*do not count pos_sizes byte*/ );
+			header.rewind();
+
+			log(std::to_string(this->myServer.getPeerId() % 100) + " write "+ message_id +" ("+ message.limit() +") to socket: " + m_socket->is_open() + "\n");
+			{ std::lock_guard lock_socket{ m_socket_write_mutex };
 				if (isConnected() || alive.load()) { // don't write if the socket is just closed (shouldn't happen, just in case)
-					m_socket->write(fullData);
+					m_socket->write(header);
+					if (message.available() > 0) {
+						assert(message.position() == 0);
+						message.rewind();
+						m_socket->write(message);
+					}
 				}
 			}
-			if (encodedMsg != nullptr && message.position() != 0) {
-				msg(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) + std::string("Warn, you want to send a buffer which is not rewinded : ") + message.position());
-			}
-			//log(std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100) +  " WRITE MESSAGE : " + messageId + " " + messageId_to_string(messageId) 
-				//+ " : " + (message.position() >= message.limit() ? std::string("null") : std::to_string(message.available())));
-
-			// update to buffer position, like if we've done all get()
-			message.position(message.limit());
 		//}
 		//catch (std::exception e) {
 		//	std::cerr << std::to_string(myServer.getPeerId() % 100) + "->" + (getPeerId() % 100)<<  " ERROR: " << e.what() << "\n";
@@ -260,8 +281,8 @@ namespace supercloud {
 		return socket_read_barrier;
 	}
 
-	void Peer::readMessage() {
-		if (!this->alive) { return; }
+	bool Peer::readMessage() {
+		if (!this->alive) { return false; }
 #ifdef _DEBUG
 		//for tests
 		{ std::lock_guard lock_socket{ socket_read_barrier }; }
@@ -277,7 +298,7 @@ namespace supercloud {
 			int nb5 = 0;
 			do {
 
-				{ std::lock_guard lock_socket{ socket_read_mutex };
+				{ std::lock_guard lock_socket{ m_socket_read_mutex };
 					size_read = m_socket->read(buffer_one_byte.rewind());
 					byte_read = buffer_one_byte.flip().get();
 				}
@@ -291,7 +312,7 @@ namespace supercloud {
 					nb5 = 0;
 					error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + (" stream error: receive ") + byte_read + " instead of 5  ,peerid=" + getPeerId() % 100);
 				}
-				if (!this->alive) { return; }
+				if (!this->alive) { return false; }
 			} while (nb5 < 4);
 #ifdef _DEBUG
 			//for tests
@@ -300,95 +321,107 @@ namespace supercloud {
 
 			// read messagetype
 			//log(std::to_string( this->myServer.getPeerId() % 100 ) << " read type socket: " << socket->is_open() << "\n";
-			uint8_t same_byte;
-			{ std::lock_guard lock_socket{ socket_read_mutex };
-				size_read = m_socket->read(buffer_one_byte.rewind());
-				byte_read = buffer_one_byte.flip().get();
-				if (!this->alive) { return; }
-				size_read = m_socket->read(buffer_one_byte.rewind());
-				same_byte = buffer_one_byte.flip().get();
+			ByteBuff buff_3bytes(3);
+			{ std::lock_guard lock_socket{ m_socket_read_mutex };
+				while (buff_3bytes.available() > 0) {
+					size_read = m_socket->read(buff_3bytes);
+					if (size_read < 1) { throw read_error("End of stream"); }
+				}
+				buff_3bytes.flip();
+				if (!this->alive) { return false; }
 			}
-			if (same_byte != byte_read) {
-				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + (" Stream error: not same byte for message id : ") + byte_read + " != " + same_byte);
-				return;
+			uint8_t message_id_first = buff_3bytes.get();
+			uint8_t message_id = buff_3bytes.get();
+			uint8_t nb_bytes_sizes = buff_3bytes.get();
+			bool is_priority_clear = false; // not really used.
+			if (message_id_first == *UnnencryptedMessageType::PRIORITY_CLEAR) {
+				is_priority_clear = true;
+			}else if (message_id_first != message_id) {
+				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + (" Stream error: not same byte for message id : ") + message_id_first + " != " + message_id);
+				return true;
 			}
-			uint8_t message_id = byte_read;
-			//log(std::to_string(myServer.getPeerId() % 100) + " read message id :" + uint16_t(message_id) +" "+ messageId_to_string(message_id));
+			log(std::to_string(myServer.getPeerId() % 100) + " read message id :" + uint16_t(message_id) +" "+ messageId_to_string(message_id)+" == "+ uint16_t(message_id_first)+" => "+ uint16_t(nb_bytes_sizes));
 			if (size_read < 1) {
 				throw read_error("End of stream");
 			}
-			if (!this->alive) { return; }
+			if (!this->alive) { return false; }
 			if (message_id >50) {
 				log(std::string("error, receive a too big message id: ") + message_id);
-				return;
+				return true;
 			}
+			if (message_id == *UnnencryptedMessageType::CONNECTION_CLOSED) {
+				//special case: it's a connection_close message: terminate everything
+				close();
+				return false;
+			}
+			
 			// read message
 			ByteBuff buff_message;
 			size_t message_size;
+			size_t message_counter;
+			bool is_connected = this->isConnected();
 			try {
-				ByteBuff buff_8bytes(8);
+				ByteBuff buff_Xbytes(nb_bytes_sizes);
 				//streamIn->read((char*)buffIn.raw_array(), 8);
-				{ std::lock_guard lock_socket{ socket_read_mutex };
-					size_read = m_socket->read(buff_8bytes);
-					buff_8bytes.flip();
-					if (!this->alive) { return; }
+				{ std::lock_guard lock_socket{ m_socket_read_mutex };
+					while (buff_Xbytes.available() > 0) {
+						size_read = m_socket->read(buff_Xbytes);
+						if (size_read < 1) { throw read_error("End of stream"); }
+					}
+					buff_Xbytes.flip();
+					if (!this->alive) { return false; }
 				}
-				message_size = buff_8bytes.getInt();
-				size_t message_size2 = buff_8bytes.getInt();
+				message_counter = buff_Xbytes.getSize();
+				message_size = buff_Xbytes.getSize();
+				size_t message_size2 = buff_Xbytes.getSize();
+				log(std::to_string(myServer.getPeerId() % 100) + " read message size :" + message_size + " == " + uint16_t(message_size2) + " with counter " + message_counter);
 				if (message_size < 0) {
 					error("Stream error: stream want me to read a negative number of bytes");
-					return;
+					return true;
 				}
 				if (message_size != message_size2) {
 					error(std::string("Stream error: not same number of bytes to read : ") + std::to_string(message_size) + " != " + std::to_string(message_size2));
-					return;
+					return true;
 				}
 				//log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + ("Read ") + nbBytes + " from the stream");
-				buff_message.limit(message_size).rewind();
+				buff_message.expand(message_size);
 				if (message_size > 0) {
-					size_t pos = 0;
 					//while mandatory, because it's not a buffered stream.
-					while (pos < message_size) {
+					while (buff_message.available()) {
 						//pos += streamIn->readsome((char*)buffIn.raw_array() + pos, nbBytes - pos);
-						{ std::lock_guard lock_socket{ socket_read_mutex };
-							pos += m_socket->read(buff_message);
-							buff_message.flip();
+						{ std::lock_guard lock_socket{ m_socket_read_mutex };
+							size_read = m_socket->read(buff_message);
 						}
-						if (!this->alive) { return; }
+						if (size_read < 1) { throw read_error("End of stream"); }
+						if (!this->alive) { return false; }
 					}
+					buff_message.flip();
 				}
 			}
 			catch (const std::exception& e) {
 				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " readMessage ERROR in socket read: " + e.what());
 				throw read_error(e.what());
 			}
+			log(std::to_string(myServer.getPeerId() % 100) + " message read :" + buff_message.position() + " / " + buff_message.limit());
 			try{
 				//decode mesage
 				//if (decoder == nullptr) decoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.DECRYPT_MODE);
 				uint8_t* decodedMsg = nullptr;
 				size_t decodedMsgLength = 0;
 				if (message_id > *UnnencryptedMessageType::FIRST_ENCODED_MESSAGE) {
-					if (this->isConnected()) {
-						if (buff_message.position() < buff_message.limit() && message_size > 0 && buff_message.available() > 0) {
-							//decodedMsg = decoder.doFinal(buffIn.raw_array(), buffIn.position(), buffIn.limit());
-							// TODO: naive xor
-							//put decoded message into the read buffer
-							//buff_message.reset().put(decodedMsg, decodedMsgLength).rewind();
-							//but for now, leave it untouched.
+					if (is_connected){
+						if (buff_message.available() > 0) {
+							myServer.getIdentityManager().decodeMessageSecret(buff_message, ptr(), message_counter);
 						}
 					} else {
 						error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + "Error, tried to read a " + int32_t(message_id) + ":" + messageId_to_string(message_id) + " message when we don't have a aes key!");
-						return;
+						return true;
 					}
 				}//else : nothing to do, it's not encoded
 				//log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " READ MESSAGE " + int32_t(message_id)+" : " + messageId_to_string(message_id));
-				//use message
-				if (message_id == *UnnencryptedMessageType::PRIORITY_CLEAR) {
-					message_id = buff_message.get();
-					log(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " read PRIORITY_CLEAR : "+ int32_t(message_id) + " : " + messageId_to_string(message_id));
-				}
-				if (!this->alive) { return; }
+				if (!this->alive) { return false; }
 
+				//use message
 				// standard case, give the peer id. Our physical server should be able to retrieve us.
 				myServer.propagateMessage(this->ptr(), (uint8_t)message_id, buff_message);
 
@@ -402,7 +435,9 @@ namespace supercloud {
 		catch (const std::exception& e) {
 			error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " readMessage FATAL ERROR (closing socket): " + e.what());
 			close();
+			return false;
 		}
+		return true;
 	}
 
 	void Peer::close() {
@@ -415,6 +450,10 @@ namespace supercloud {
 		// (so they still have a chance to emit a last message before closure) 
 		if (was_alive) {
 			this->myServer.propagateMessage(this->ptr(), *UnnencryptedMessageType::CONNECTION_CLOSED, ByteBuff{});
+			if (m_socket && m_socket->is_open()) {
+				//we are gracefully notifying the peer that we close the connection.
+				this->writeMessage(*UnnencryptedMessageType::CONNECTION_CLOSED);
+			}
 		}
 		//update the peer connection status (track the connectivity of a single peer)
 		// now other manager can emit message to the peer, and be notified by timers.
@@ -432,7 +471,7 @@ namespace supercloud {
 
 		}
 		//stay connected until the CONNECTION_CLOSED is finished, just before deleting the sockets
-		{ std::lock_guard lock_socket{ socket_write_mutex };
+		{ std::lock_guard lock_socket{ m_socket_write_mutex };
 
 			//close the socket
 			try {

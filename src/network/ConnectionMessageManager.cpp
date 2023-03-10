@@ -241,6 +241,7 @@ namespace supercloud{
             } else {
                 //log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_VERIFY_IDENTITY");
                 IdentityManager::Identityresult result = clusterManager->getIdentityManager().receiveIdentity(sender, message);
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_VERIFY_IDENTITY, result="+ uint8_t(result));
                 if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                     status[sender].last_request = ConnectionStep::RSA;
@@ -258,7 +259,7 @@ namespace supercloud{
                     assert(!clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty());
                     //ask for next step (only if i'm feeling it, to avoid unneeded conflicts and connection delays)
                     if (QUICKER_CONNECTION && sender->getPeerId() < clusterManager->getPeerId()) {
-                        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  I AM THE LEADER? I WILL ASK FOR PUB KEY");
+                        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  I AM THE LEADER? I WILL ASK FOR SECRETE KEY");
                         requestCurrentStep(sender, false);
                     }//else, even if nothing is send by the other peer, the timer event should continue the connection.
                     else {

@@ -130,6 +130,7 @@ namespace supercloud {
                 this->m_fifo.pop_front();
             }
         }
+        //log(this->local_endpoint().address() + ":" + this->local_endpoint().port() + " read " + (buffer.position() - old_pos) + " bytes from " + m_other_side->local_endpoint().address() + ":" + m_other_side->local_endpoint().port());
         return buffer.position() - old_pos;
     }
 

@@ -60,8 +60,16 @@ namespace supercloud {
 
     int64_t update_check_NO_COMPUTER_ID = 0;
     void PhysicalServer::update() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        std::this_thread::sleep_for(std::chrono::milliseconds(5000)); //FIXME only for testing purpose to reduce clutter, delete
+        for (size_t i = 0; i < 100; i++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (this->m_state.isClosed()) return;
+        }
+        for (size_t i = 0; i < 500; i++) //FIXME only for testing purpose to reduce clutter, delete
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10)); //FIXME only for testing purpose to reduce clutter, delete
+            if (this->m_state.isClosed()) return;
+        }
+        log(std::to_string(getPeerId() % 100) + " update, is closed? "+ this->m_state.isClosed());
         //bool quickUpdate = true;
         //can't update until you're connected
         if (getComputerId() == NO_COMPUTER_ID) {
@@ -292,31 +300,31 @@ namespace supercloud {
                         } else if (otherPeer->getPeerId() != 0) {
                             if (otherPeer->getPeerId() < getPeerId()) {
                                 error(std::to_string( getPeerId() % 100) + " warn, (I AM LEADER) a connection to "
-                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....");
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here..... => close it");
                                 peer->close();
                             } else {
                                 error(std::to_string( getPeerId() % 100) + " warn, (I am not leader) a connection to "
-                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here..... => wait\n");
                                 m_peers.push_back(peer);
                                 return true;
                             }
                         } else if (peer->getPeerId() != 0) {
                             if (peer->getPeerId() < getPeerId()) {
                                 error(std::to_string( getPeerId() % 100) + " warn, (I AM LEADER) a connection to "
-                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here..... => closeit\n");
                                 otherPeer->close();
                                 // m_peers.put(peer->getKey(), peer);
                                 m_peers.push_back(peer);
                                 return true;
                             } else {
                                 error(std::to_string( getPeerId() % 100) + " warn, (I am not leader) a connection to "
-                                        + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
+                                        + std::to_string(peer->getPeerId() % 100) + " is already here..... =>donothing\n");
                                 m_peers.push_back(peer);
                                 return true;
                             }
                         } else {
                             error(std::to_string( getPeerId() % 100) + " warn, an unknown connection to "
-                                    + std::to_string(peer->getPeerId() % 100) + " is already here.....\n");
+                                    + std::to_string(peer->getPeerId() % 100) + " is already here..... => close\n");
                             peer->close();
                         }
                         log(std::to_string(getPeerId() % 100) + " 'old' accept connection to "

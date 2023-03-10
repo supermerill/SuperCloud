@@ -330,12 +330,10 @@ namespace supercloud{
 		ByteBuff buff;
 		buff.put(uint8_t(m_public_key.type));
 		//my pub key
-		//uint8_t[] encodedPubKey = publicKey.getEncoded();
-		std::vector<uint8_t> data_encoded = m_public_key.raw_data;
-		buff.putSize(data_encoded.size()).put(data_encoded);
+		buff.putSize(m_public_key.raw_data.size()).put(m_public_key.raw_data);
 		//send packet
 		peer->writeMessage(*UnnencryptedMessageType::SEND_SERVER_PUBLIC_KEY, buff.flip());
-
+		log(std::string("PUBKEY:Send with") + uint8_t(m_public_key.type) + " : " + (m_myself->getPeerId() % 100) + "->" + (peer->getPeerId() % 100));
 	}
 
 	void IdentityManager::receivePublicKey(PeerPtr sender, const ByteBuff& buff_in) {
@@ -349,6 +347,7 @@ namespace supercloud{
 		}
 		//get encryption type
 		EncryptionType rsa_encryption_type = EncryptionType(buff_in.get());
+		log(std::string("PUBKEY:Get with") + uint8_t(rsa_encryption_type) + " : " + (m_myself->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100));
 		//get pub Key
 		size_t nb_bytes = buff_in.getSize();
 		std::vector<uint8_t> dist_public_key_raw_data = buff_in.get(nb_bytes);
@@ -409,6 +408,7 @@ namespace supercloud{
 		//TODO: encrypt it also with his public key if we have it?
 		ByteBuff buff;
 		buff.put(uint8_t(m_public_key.type));
+		log(std::string("PUBKEY:SendV with") + uint8_t(m_public_key.type) + " : " + (m_myself->getPeerId() % 100) + "->" + (peer->getPeerId() % 100));
 		//encode msg with our private key => no, it's useless!
 		//Cipher cipher = Cipher.getInstance("RSA");
 		//cipher.init(Cipher.ENCRYPT_MODE, privateKey);
@@ -431,12 +431,10 @@ namespace supercloud{
 	}
 
 
-	ByteBuff IdentityManager::getIdentityDecodedMessage(const PublicKeyHolder& key, const ByteBuff& buffIn) {
-		EncryptionType encryption = EncryptionType(buffIn.get());
-		assert(key.type == encryption);
+	ByteBuff IdentityManager::getIdentityDecodedMessage(const PublicKeyHolder& key, const ByteBuff& buff) {
 		//get msg
-		size_t nbBytes = buffIn.getSize();
-		std::vector<uint8_t> data = buffIn.get(nbBytes);
+		size_t nbBytes = buff.getSize();
+		std::vector<uint8_t> data = buff.get(nbBytes);
 
 		decrypt(data, key);
 
@@ -449,22 +447,21 @@ namespace supercloud{
 		//log(std::to_string(serv.getPeerId() % 100) + " (answerIdentity) receive GET_IDENTITY to " + peer->getPeerId() % 100+"\n");
 
 
-		PublicKeyHolder theirPubKey;
+		PublicKeyHolder their_pub_key;
 		{ std::lock_guard lock(tempPubKey_mutex);
-			const auto& it_theirPubKey = tempPubKey.find(peer->getPeerId());
-			if (it_theirPubKey == tempPubKey.end()) {
+			if (const auto& it_their_pub_key = tempPubKey.find(peer->getPeerId()); it_their_pub_key == tempPubKey.end()) {
 				//request his key
 				log(std::to_string(serv.getPeerId() % 100) + " (answerIdentity)i don't have public key! why are you doing that? Request his one!"+"\n");
 				return Identityresult::NO_PUB;
 			} else {
-				theirPubKey = it_theirPubKey->second;
+				their_pub_key = it_their_pub_key->second;
 			}
 		}
-		assert(theirPubKey.type > EncryptionType::UNKNOWN);
-		assert(!theirPubKey.raw_data.empty());
+		assert(their_pub_key.type > EncryptionType::UNKNOWN);
+		assert(!their_pub_key.raw_data.empty());
 
 		//check if the other side is ok and sent us something (it's a pre-emptive check)
-		if (buff_in.limit() == 3 && buff_in.getShort() == -1) {
+		if (buff_in.limit() <= 3) {
 			error(std::to_string(serv.getPeerId() % 100) + " (answerIdentity) he ask use somethign whithout a message! it's crazy!!! " + peer->getComputerId() + " : " + peer->getPeerId() % 100+"\n");
 			//not ready, maybe he didn't choose his computerid yet?
 			//we have to ask him a bit later.
@@ -472,7 +469,10 @@ namespace supercloud{
 			return Identityresult::BAD;
 		}
 
-		ByteBuff buffDecoded = getIdentityDecodedMessage(theirPubKey, buff_in);
+		EncryptionType encryption = EncryptionType(buff_in.get());
+		log(std::string("PUBKEY:GetV with") + uint8_t(encryption) + " : " + (m_myself->getPeerId() % 100) + "<-" + (peer->getPeerId() % 100));
+		assert(their_pub_key.type == encryption);
+		ByteBuff buffDecoded = getIdentityDecodedMessage(their_pub_key, buff_in);
 		ComputerId unverifiedCompId = buffDecoded.deserializeComputerId(); ///osef dist_cid = because we can't verify it.
 		std::string msgDecoded = buffDecoded.getUTF8();
 		std::string theirPwd = buffDecoded.getUTF8();
@@ -508,7 +508,7 @@ namespace supercloud{
 		assert(!their_pub_key.raw_data.empty());
 
 		//check if the other side is ok and sent us something
-		if (message.limit() == 2 && message.getShort() == -1) {
+		if (message.limit() == 2) {
 			log(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) he doesn't want to give us his identity! " + peer->getComputerId() + " : " + peer->getPeerId() % 100+"\n");
 			//not ready, maybe he didn't choose his computerid yet?
 			//we have to ask him a bit later.
@@ -516,6 +516,9 @@ namespace supercloud{
 			return Identityresult::BAD;
 		}
 
+		EncryptionType encryption = EncryptionType(message.get());
+		assert(their_pub_key.type == encryption);
+		log(std::string("PUBKEY:GetV2 with") + uint8_t(encryption) + " : " + (m_myself->getPeerId() % 100) + "<-" + (peer->getPeerId() % 100));
 		ByteBuff buff_decoded = getIdentityDecodedMessage(their_pub_key, message);
 
 		//data extracted
@@ -564,6 +567,7 @@ namespace supercloud{
 				{ std::lock_guard lock(m_peer_data_mutex);
 					assert(m_peer_2_peerdata.find(peer) != m_peer_2_peerdata.end());
 					this->m_peer_2_peerdata[peer].rsa_public_key = their_pub_key;
+					log(std::string("PUBKEY:Validate with") + uint8_t(their_pub_key.type) + " : " + (m_myself->getPeerId() % 100) + "<-" + (peer->getPeerId() % 100));
 				}
 				// the computerId is validated, as we can't compare it with previous rsa key (first time we see it).
 				//TODO: find a way to revoke the rsa key when comparing our server list with other peers. Like, if we found that the majority has a different public key, revoke our and take their.
@@ -587,8 +591,17 @@ namespace supercloud{
 
 			} else {
 				//if (!Arrays.equals(this->m_peer_2_peerdata.get(dist_cid).getEncoded(), theirPubKey.getEncoded())) {
-				if (found_public_key.raw_data != their_pub_key.raw_data) {
-					error(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) error, cluster id " + dist_cid + " has a wrong public key (not the one i registered) " + peer->getPeerId() % 100 + " "+"\n");
+				if (found_public_key.raw_data != their_pub_key.raw_data || found_public_key.type != their_pub_key.type) {
+					std::string rsa_log_str_sto;
+					for (uint8_t c : found_public_key.raw_data) {
+						rsa_log_str_sto += u8_hex(c);
+					}
+					std::string rsa_log_str;
+					for (uint8_t c : their_pub_key.raw_data) {
+						rsa_log_str += u8_hex(c);
+					}
+					error(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) error, computer id " + dist_cid + " has a wrong public key {"+ rsa_log_str +"}"+ uint8_t(their_pub_key.type) 
+						+" (not the one i registered:{" + rsa_log_str_sto + "}"+ uint8_t(found_public_key.type) +") " + peer->getPeerId() % 100 + " "+"\n");
 					//error(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) what i have : " + Arrays.tostd::string(this->m_peer_2_peerdata.get(dist_cid).getEncoded())+"\n");
 					//error(std::to_string(serv.getPeerId() % 100) + " (receiveIdentity) what i received : " + Arrays.tostd::string(this->m_peer_2_peerdata.get(dist_cid).getEncoded())+"\n");
 					return Identityresult::BAD;
@@ -611,7 +624,8 @@ namespace supercloud{
 			}
 
 		}
-
+		assert(this->m_peer_2_peerdata.find(peer) != this->m_peer_2_peerdata.end());
+		assert(m_peer_2_peerdata[peer].rsa_public_key.type == their_pub_key.type);
 		return Identityresult::OK;
 		
 	}
@@ -648,6 +662,9 @@ namespace supercloud{
 
 	//note: the proposal/confirm thing work because i set my aes key before i emit my proposal.
 
+	std::vector<SecretKey> last_msg;
+	std::vector<SecretKey> last_msg_enc;
+	std::vector<SecretKey> last_encoded_msg;
 	void IdentityManager::sendAesKey(PeerPtr peer, uint8_t aesState) {
 		log(std::to_string(serv.getPeerId() % 100) + " (sendAesKey) emit SEND_SERVER_AES_KEY state:" + (int)(aesState)+" : " + ((aesState & AES_CONFIRM) != 0 ?  "CONFIRM" : "PROPOSAL") + " to " + peer->getPeerId() % 100+"\n");
 
@@ -669,21 +686,7 @@ namespace supercloud{
 				PeerData& data_peer = m_peer_2_peerdata[peer];
 				if (data_peer.aes_key.size() == 0) {
 					//create new aes key
-					if (m_encryption_type == EncryptionType::AES) {
-						//TODO
-						//KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-						//keyGen.init(128);
-						//secretKey = keyGen.generateKey();
-					} else {
-						std::string secretStr = to_hex_str(rand_u63());
-						for (int i = 0; i < secretStr.size(); i++) {
-							secret_key.push_back(uint8_t(secretStr[i]));
-						}
-						//						byte[] aesKey = new byte[128 / 8];	// aes-128 (can be 192/256)
-						//						SecureRandom prng = new SecureRandom();
-						//						prng.nextBytes(aesKey);
-					}
-					data_peer.aes_key = secret_key;
+					secret_key = data_peer.aes_key = this->createNewSecretKey(m_encryption_type);
 				} else {
 					secret_key = data_peer.aes_key;
 				}
@@ -695,14 +698,21 @@ namespace supercloud{
 			assert(secret_key.size() > 0);
 			buff_msg.putSize(secret_key.size()).put(secret_key);
 
+			last_msg.push_back(buff_msg.flip().getAll());
+
 			//encode msg 
 			std::vector<uint8_t> data_to_encode = buff_msg.flip().getAll();
 			encrypt(data_to_encode, their_pub_key);
 
+			last_msg_enc.push_back(data_to_encode);
+
 			//send it
 			buff_msg.reset();
 			buff_msg.put(aesState);
+			buff_msg.put(uint8_t(m_public_key.type));
+			buff_msg.put(uint8_t(their_pub_key.type));
 			buff_msg.putSize(data_to_encode.size()).put(data_to_encode);
+			last_encoded_msg.push_back(buff_msg.flip().getAll());
 
 			//send packet
 			peer->writeMessage(*UnnencryptedMessageType::SEND_SERVER_AES_KEY, buff_msg.flip());
@@ -727,35 +737,48 @@ namespace supercloud{
 		if (has_pub_key) {
 			//decrypt the key
 			//0 : get the message
+			SecretKey test = message.getAll();
+			message.rewind();
 			uint8_t aes_state_msg = message.get();
+			EncryptionType pub_key_protocol_him = EncryptionType(message.get());
+			EncryptionType pub_key_protocol_me = EncryptionType(message.get());
+			assert(m_public_key.type == pub_key_protocol_me);
+			assert(their_pub_key.type == pub_key_protocol_him);
 			size_t nb_bytes_msg = message.getSize();
 			log(std::to_string(serv.getPeerId() % 100) + " (receiveAesKey) receive SEND_SERVER_AES_KEY state:" + (int)(aes_state_msg)+" : " + ((aes_state_msg & AES_CONFIRM) != 0 ? "CONFIRM" : "PROPOSAL")+", keysize="+ nb_bytes_msg);
 			std::vector<uint8_t> aes_key_msg = message.get(nb_bytes_msg);
+			std::vector<uint8_t> test_to_del = aes_key_msg;
 
-			decrypt(aes_key_msg, their_pub_key);
+			bool valid = decrypt(aes_key_msg, their_pub_key);
+			if (!valid) {
+				//there is an error with this peer: disconnect
+				peer->close();
+				return false;
+			}
+			assert(contains(last_msg, aes_key_msg));
 			ByteBuff buff_aes;
 			buff_aes.put(aes_key_msg).flip();
 
-			EncryptionType secret_key_protocol = EncryptionType(buff_aes.get());
+			EncryptionType secret_key_protocol_him = EncryptionType(buff_aes.get());
 			nb_bytes_msg = buff_aes.getSize();
 			if (nb_bytes_msg > buff_aes.available()) {
 				//TODO: if multiple times, disconnect this peer (or even ban him)
 				assert(false);
 				return false;
 			}
-			SecretKey secret_key_received = buff_aes.get(nb_bytes_msg);
+			const SecretKey secret_key_received = buff_aes.get(nb_bytes_msg);
 
 			//don't accept a protocol less secure than ours
-			if (m_encryption_type > secret_key_protocol) {
+			if (m_encryption_type > secret_key_protocol_him) {
 				//send our key
 				sendAesKey(peer, AES_PROPOSAL);
 				return false;
 			}
-			if (m_encryption_type < secret_key_protocol) {
+			if (m_encryption_type < secret_key_protocol_him) {
 				{ std::lock_guard lock(m_peer_data_mutex);
 					//assert their is no other aes-verified peers yet
 					assert(std::find_if(this->m_peer_2_peerdata.begin(), this->m_peer_2_peerdata.end(), [peer](const std::pair<PeerPtr, PeerData>& p) { return !p.second.aes_key.empty() && p.first != peer; }) == this->m_peer_2_peerdata.end());
-					setEncryption(secret_key_protocol);
+					setEncryption(secret_key_protocol_him);
 					for (auto& peer2data : m_peer_2_peerdata) {
 						peer2data.second.aes_key.clear();
 					}
@@ -779,7 +802,7 @@ namespace supercloud{
 					if ((aes_state_msg & AES_CONFIRM) != 0) {
 						shouldEmit = AES_CONFIRM;
 					}
-				} else if (it_secretKey->second.aes_key == secret_key_received || it_secretKey->second.aes_key.size() == 0) {
+				} else if (secret_key_received == it_secretKey->second.aes_key  || it_secretKey->second.aes_key.size() == 0) {
 					//same, no problem
 					log(std::to_string(serv.getPeerId() % 100) + " (receiveAesKey) same as i have: "+ aes_log_str  +" (size="+ it_secretKey->second.aes_key.size());
 					if ((aes_state_msg & AES_CONFIRM) == 0) {

@@ -1,8 +1,8 @@
 
-#define CATCH_CONFIG_DISABLE
+//#define CATCH_CONFIG_DISABLE
 
-//#include <catch_main.hpp> // main is in test_connection
-#include <catch2/catch.hpp>
+#include <catch_main.hpp> 
+//#include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
 #include "utils/Parameters.hpp"
 #include <filesystem>

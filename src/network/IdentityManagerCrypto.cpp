@@ -5,9 +5,10 @@
 
 #ifndef NO_CRYPTOPP
 //#include "cryptopp/dll.h"
+#include <cryptopp/eax.h>
 #include <cryptopp/osrng.h>
-#include <cryptopp/rsa.h>
 #include <cryptopp/pssr.h>
+#include <cryptopp/rsa.h>
 #endif
 
 #include <cassert>
@@ -79,6 +80,93 @@ namespace supercloud{
 		putCryptoPPInteger(save_pub_key, pub_key.GetModulus()); //n
 		putCryptoPPInteger(save_pub_key, pub_key.GetPublicExponent()); //e
 		saved_key = save_pub_key.flip().getAll();
+	}
+	struct CryptoppAES {
+		CryptoPP::EAX<CryptoPP::AES>::Encryption encoder;
+		CryptoPP::EAX<CryptoPP::AES>::Decryption decoder;
+	};
+	struct CryptoppSecretKey {
+		CryptoPP::SecByteBlock key;
+		CryptoPP::SecByteBlock iv;
+		CryptoppSecretKey() : key(CryptoPP::AES::DEFAULT_KEYLENGTH), iv(CryptoPP::AES::BLOCKSIZE){};
+		CryptoppSecretKey(const SecretKey& n_key, const SecretKey& n_iv) : key(n_key.data(), n_key.size()), iv(n_iv.data(), n_iv.size()) {}
+	};
+	CryptoppSecretKey  getCryptoppSecretKey(const SecretKey& sec_key) {
+		ByteBuff buff;
+		buff.put(sec_key).flip();
+		SecretKey key = buff.get(buff.getSize());
+		SecretKey iv = buff.get(buff.getSize());
+		return CryptoppSecretKey{ key , iv };
+	}
+
+	void putCryptoppSecretKey(const CryptoppSecretKey& sec_key, SecretKey& saved_key) {
+		ByteBuff save_pub_key;
+		save_pub_key.putSize(sec_key.key.size()).put(sec_key.key.data(), sec_key.key.size());
+		save_pub_key.putSize(sec_key.iv.size()).put(sec_key.iv.data(), sec_key.iv.size());
+		saved_key = save_pub_key.flip().getAll();
+	}
+	typedef std::vector<uint8_t> VecByte;
+	VecByte cryptopp_sign(const VecByte& data, CryptoPP::RSA::PrivateKey private_key) {
+		// signer
+		CryptoPP::RSASS<CryptoPP::PSSR, CryptoPP::SHA1>::Signer signer{ private_key };
+		//CryptoPP::RSASS<CryptoPP::PSSR, CryptoPP::SHA256>::Signer signer{ private_key };
+		// transform buffer into cryptopp type
+		CryptoPP::SecByteBlock signature(signer.MaxSignatureLength(data.size()));
+		//sign
+		size_t signature_len = signer.SignMessageWithRecovery(CRYPTOPP_RANDOM_GENERATOR, &data[0], data.size(), NULL, 0, signature);
+		//transform output into vector<byte>
+		VecByte v;
+		v.resize(signature_len);
+		std::copy(signature.BytePtr(), signature.BytePtr() + signature_len, v.begin());
+		return v;
+	}
+
+	VecByte cryptopp_unsign(const VecByte& data, CryptoPP::RSA::PublicKey public_key) {
+		// verifier
+		CryptoPP::RSASS<CryptoPP::PSSR, CryptoPP::SHA1>::Verifier verifier(public_key);
+		//CryptoPP::RSASS<CryptoPP::PSSR, CryptoPP::SHA256>::Verifier verifier(public_key);
+		// transform buffer into cryptopp type
+		CryptoPP::SecByteBlock signature(&data[0], data.size());
+		// decode & verify
+		CryptoPP::SecByteBlock recovered(verifier.MaxRecoverableLengthFromSignatureLength(data.size()));
+		CryptoPP::DecodingResult result = verifier.RecoverMessage(recovered, NULL, 0, signature, data.size());
+		if (!result.isValidCoding) {
+			return VecByte{};
+		}
+		//transform output into vector<byte>
+		size_t recovered_len = result.messageLength;
+		VecByte v;
+		v.resize(recovered_len);
+		std::copy(recovered.BytePtr(), recovered.BytePtr() + recovered_len, v.begin());
+		return v;
+	}
+
+	VecByte cryptopp_encrypt(const VecByte& data, CryptoPP::RSA::PublicKey public_key) {
+		//encryptor
+		CryptoPP::RSAES_OAEP_SHA_Encryptor encryptor{ public_key };
+		//test that the data is not too big
+		assert(0 != encryptor.FixedMaxPlaintextLength());
+		assert(data.size() <= encryptor.FixedMaxPlaintextLength());
+		//create output buffer
+		VecByte data_out;
+		data_out.resize(encryptor.CiphertextLength(data.size()));
+		encryptor.Encrypt(CRYPTOPP_RANDOM_GENERATOR, &data[0], data.size(), &data_out[0]);
+		//finished
+		return data_out;
+	}
+	VecByte cryptopp_decrypt(const VecByte& data, CryptoPP::RSA::PrivateKey private_key) {
+		//decryptor
+		CryptoPP::RSAES_OAEP_SHA_Decryptor decryptor{ private_key };
+		//create output buffer
+		VecByte data_out;
+		data_out.resize(decryptor.MaxPlaintextLength(data.size()));
+		CryptoPP::DecodingResult result = decryptor.Decrypt(CRYPTOPP_RANDOM_GENERATOR, &data[0], data.size(), &data_out[0]);
+		//checks
+		assert(result.isValidCoding);
+		assert(result.messageLength <= data_out.size());
+		//format output
+		data_out.resize(result.messageLength);
+		return data_out;
 	}
 #else
 	constexpr IdentityManager::EncryptionType DefaultAESEncryptionType = IdentityManager::EncryptionType::NAIVE;
@@ -168,9 +256,8 @@ namespace supercloud{
 	}
 
 	void IdentityManager::encrypt(std::vector<uint8_t>& data, const PublicKeyHolder& peer_pub_key) {
-
 #ifndef NO_CRYPTOPP
-		CryptoPP::Integer temp_buffer;
+		VecByte temp_buffer;
 #endif
 		//encrypt with our private key (for signing purpose)
 		if (m_public_key.type == EncryptionType::NAIVE) {
@@ -178,17 +265,10 @@ namespace supercloud{
 			compute_naive_xor(&data[0], data.size(), m_private_key);
 		} else if (m_public_key.type == EncryptionType::RSA) {
 #ifndef NO_CRYPTOPP
-			// get public key
+			// get private key
 			CryptoPP::RSA::PrivateKey private_key = getCryptoppPrivateKey(m_private_key);
-			////get data
-			//temp_buffer = CryptoPP::Integer{ &data[0], data.size() };
-			CryptoPP::RSASS<CryptoPP::PSSR, CryptoPP::SHA1>::Signer signer{ private_key };
 			// sign
-			CryptoPP::SecByteBlock signature(signer.MaxSignatureLength(data.size()));
-			//note: data can't be bigger (in bits) than the RSA_KEY_SIZE
-			size_t signature_len = signer.SignMessageWithRecovery(CRYPTOPP_RANDOM_GENERATOR, &data[0], data.size(), NULL, 0, signature);
-
-			temp_buffer.Decode(signature.BytePtr(), signature_len, CryptoPP::Integer::UNSIGNED);
+			temp_buffer = cryptopp_sign(data, private_key);
 #else
 			throw new std::exception("error, no cryptopp for rsa creation");
 #endif
@@ -204,15 +284,16 @@ namespace supercloud{
 			compute_naive_xor(&data[0], data.size(), peer_pub_key.raw_data);
 		} else if (peer_pub_key.type == EncryptionType::RSA) {
 #ifndef NO_CRYPTOPP
-			// get private key
+			// get public key
 			CryptoPP::RSA::PublicKey public_key = getCryptoppPublicKey(peer_pub_key.raw_data);
-			//CryptoPP::RSAES<CryptoPP::PKCS1v15>::Encryptor RSAES_PKCS1v15_Encryptor{ public_key }; //TOTEST
-			//encrypt
-			temp_buffer = public_key.ApplyFunction(temp_buffer);
-			//RSAES_PKCS1v15_Encryptor.Encrypt(CRYPTOPP_RANDOM_GENERATOR, const byte *plaintext, size_t plaintextLength, byte *ciphertext, const NameValuePairs &parameters = g_nullNameValuePairs) const
-			//copy back to data buffer
-			data.resize(temp_buffer.MinEncodedSize());
-			temp_buffer.Encode(&data[0], data.size());
+			//crypt in two part
+			VecByte data_crypt_1 = cryptopp_encrypt(VecByte{ temp_buffer.begin(), temp_buffer.begin() + temp_buffer.size() / 2 }, public_key);
+			VecByte data_crypt_2 = cryptopp_encrypt(VecByte{ temp_buffer.begin() + temp_buffer.size() / 2, temp_buffer.end() }, public_key);
+			//concatenate with size
+			ByteBuff buff;
+			buff.putSize(data_crypt_1.size()).put(data_crypt_1);
+			buff.putSize(data_crypt_2.size()).put(data_crypt_2);
+			data = buff.flip().getAll();
 #else
 			throw new std::exception("error, no cryptopp for rsa creation");
 #endif
@@ -225,15 +306,8 @@ namespace supercloud{
 	bool IdentityManager::decrypt(std::vector<uint8_t>& data, const PublicKeyHolder& peer_pub_key) {
 
 #ifndef NO_CRYPTOPP
-		CryptoPP::Integer temp_buffer;
+		VecByte temp_buffer;
 #endif
-		/*byte[] dataIn = new byte[nbBytes];
-		buffIn.get(dataIn, 0, nbBytes);
-		Cipher cipher = Cipher.getInstance("RSA");
-		cipher.init(Cipher.DECRYPT_MODE, privateKey);
-		ByteBuff buffDecoded = blockCipher(dataIn, Cipher.DECRYPT_MODE, cipher);
-		cipher.init(Cipher.DECRYPT_MODE, key);
-		buffDecoded = blockCipher(buffDecoded.array(), Cipher.DECRYPT_MODE, cipher);*/
 
 		//decrypt the message encoded with our key
 		if (this->m_public_key.type == EncryptionType::NAIVE) {
@@ -241,12 +315,22 @@ namespace supercloud{
 			compute_naive_xor(&data[0], data.size(), this->m_private_key);
 		} else if (this->m_public_key.type == EncryptionType::RSA) {
 #ifndef NO_CRYPTOPP
-			// get public key
+			// get private key
 			CryptoPP::RSA::PrivateKey private_key = getCryptoppPrivateKey(this->m_private_key);
-			//get data
-			temp_buffer = CryptoPP::Integer{ &data[0], data.size() };
-			//decrypt
-			temp_buffer = private_key.CalculateInverse(CRYPTOPP_RANDOM_GENERATOR, temp_buffer);
+			//get the two parts from the buffer
+			ByteBuff buff;
+			buff.put(data).flip();
+			VecByte part1 = buff.get(buff.getSize());
+			VecByte part2 = buff.get(buff.getSize());
+			assert(buff.available() == 0);
+
+			temp_buffer = cryptopp_decrypt(part1, private_key);
+			VecByte decoded_p2 = cryptopp_decrypt(part2, private_key);
+			if (temp_buffer.empty() || decoded_p2.empty()) {
+				assert(false);
+				return false;
+			}
+			temp_buffer.insert(temp_buffer.end(), decoded_p2.begin(), decoded_p2.end());
 #else
 			throw new std::exception("error, no cryptopp for rsa creation");
 #endif
@@ -260,27 +344,14 @@ namespace supercloud{
 			compute_naive_xor(&data[0], data.size(), peer_pub_key.raw_data);
 		} else if (peer_pub_key.type == EncryptionType::RSA) {
 #ifndef NO_CRYPTOPP
-			// get private key
+			// get public key
 			CryptoPP::RSA::PublicKey public_key = getCryptoppPublicKey(peer_pub_key.raw_data);
-			CryptoPP::RSASS<CryptoPP::PSSR, CryptoPP::SHA1>::Verifier verifier(public_key);
-			//get data
-			size_t signature_len = temp_buffer.MinEncodedSize(CryptoPP::Integer::UNSIGNED);
-			CryptoPP::SecByteBlock signature(signature_len);
-			temp_buffer.Encode(signature.BytePtr(), signature_len, CryptoPP::Integer::UNSIGNED);
-			//decrypt
-			CryptoPP::SecByteBlock recovered(verifier.MaxRecoverableLengthFromSignatureLength(signature_len));
-			CryptoPP::DecodingResult result = verifier.RecoverMessage(recovered, NULL, 0, signature, signature_len);
-			if (!result.isValidCoding) {
-				data.clear();
+			//verify
+			data = cryptopp_unsign(temp_buffer, public_key);
+			if (data.empty()) {
+				assert(false);
 				return false;
 			}
-			size_t recovered_len = result.messageLength;
-			//temp_buffer = public_key.CalculateInverse(CRYPTOPP_RANDOM_GENERATOR, temp_buffer);
-			//copy back to data buffer
-			//data.resize(temp_buffer.MinEncodedSize());
-			//temp_buffer.Encode(&data[0], data.size());
-			data.resize(recovered_len);
-			std::copy(recovered.BytePtr(), recovered.BytePtr() + recovered_len, data.begin());
 #else
 			throw new std::exception("error, no cryptopp for rsa creation");
 #endif
@@ -291,13 +362,44 @@ namespace supercloud{
 		return true;
 	}
 
-
-	void IdentityManager::encodeMessageSecret(ByteBuff& message, PeerPtr peer) {
-		SecretKey our_secret_key;
-		{ std::lock_guard lock(m_peer_data_mutex);
-		if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
-			our_secret_key = it->second.aes_key;
+	//note: currently, iv has the same ttl as the key. 
+	// the iv should change at least a bit for every message.
+	// so it sill be added to a counter from the peer
+	SecretKey IdentityManager::createNewSecretKey(EncryptionType type) {
+		SecretKey secret_key;
+		if (m_encryption_type == EncryptionType::AES) {
+#ifndef NO_CRYPTOPP
+			CryptoppSecretKey crypto_secret_key;
+			CRYPTOPP_RANDOM_GENERATOR.GenerateBlock(crypto_secret_key.key, crypto_secret_key.key.size());
+			CRYPTOPP_RANDOM_GENERATOR.GenerateBlock(crypto_secret_key.iv, crypto_secret_key.iv.size());
+			putCryptoppSecretKey(crypto_secret_key, secret_key);
+#else
+			throw new std::exception("error, no cryptopp for aes creation");
+#endif
+		} else {
+			std::string secretStr = to_hex_str(rand_u63());
+			for (int i = 0; i < secretStr.size(); i++) {
+				secret_key.push_back(uint8_t(secretStr[i]));
+			}
+			//						byte[] aesKey = new byte[128 / 8];	// aes-128 (can be 192/256)
+			//						SecureRandom prng = new SecureRandom();
+			//						prng.nextBytes(aesKey);
 		}
+		return secret_key;
+	}
+
+	void IdentityManager::encodeMessageSecret(ByteBuff& message, PeerPtr peer, size_t message_counter) {
+		SecretKey our_secret_key;
+#ifndef NO_CRYPTOPP
+		std::shared_ptr<CryptoppAES> our_encoder;
+#endif
+		{ std::lock_guard lock(m_peer_data_mutex);
+			if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+				our_secret_key = it->second.aes_key;
+#ifndef NO_CRYPTOPP
+				our_encoder = std::static_pointer_cast<CryptoppAES>(it->second.aes_encoder);
+#endif
+			}
 		}
 		if (our_secret_key.empty()) {
 			throw std::exception("Error, no secret key to use"); //TODO my exception
@@ -307,18 +409,45 @@ namespace supercloud{
 		} else if (m_encryption_type == EncryptionType::NAIVE) {
 			compute_naive_xor(message.raw_array(), message.limit(), our_secret_key);
 		} else if (m_encryption_type == EncryptionType::AES) {
-			//TODO
+#ifndef NO_CRYPTOPP
+			CryptoppSecretKey crypto_secret_key = getCryptoppSecretKey(our_secret_key);
+			if (!our_encoder) {
+				our_encoder = std::make_shared<CryptoppAES>();
+				our_encoder->encoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
+				our_encoder->decoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
+				//update cache storage
+				{ std::lock_guard lock(m_peer_data_mutex);
+				if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+					it->second.aes_encoder = our_encoder;
+				}
+				}
+			}
+			//randomize the iv a bit (should be 16bytes, so 2*8) (crypto_secret_key is a copy, we can modify it)
+			for (size_t i = 0; i < crypto_secret_key.iv.size() - 7; i += 8) {
+				((uint64_t*)crypto_secret_key.iv.data())[i] ^= (message_counter + peer->getPeerId());
+			}
+			our_encoder->encoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
+			our_encoder->encoder.ProcessString(message.raw_array(), message.limit());
+#else
+			throw new std::exception("error, no cryptopp for aes");
+#endif
 		} else {
 			throw std::exception("Error, no secret protocol to use"); //TODO my exception
 		}
 	}
 
-	void IdentityManager::decodeMessageSecret(ByteBuff& message, PeerPtr peer) {
+	void IdentityManager::decodeMessageSecret(ByteBuff& message, PeerPtr peer, size_t message_counter) {
 		SecretKey our_secret_key;
+#ifndef NO_CRYPTOPP
+		std::shared_ptr<CryptoppAES> our_encoder;
+#endif
 		{ std::lock_guard lock(m_peer_data_mutex);
-		if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
-			our_secret_key = it->second.aes_key;
-		}
+			if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+				our_secret_key = it->second.aes_key;
+#ifndef NO_CRYPTOPP
+				our_encoder = std::static_pointer_cast<CryptoppAES>(it->second.aes_encoder);
+#endif
+			}
 		}
 		if (our_secret_key.empty()) {
 			throw std::exception("Error, no secret key to use"); //TODO my exception
@@ -328,7 +457,28 @@ namespace supercloud{
 		} else if (m_encryption_type == EncryptionType::NAIVE) {
 			compute_naive_xor(message.raw_array(), message.limit(), our_secret_key);
 		} else if (m_encryption_type == EncryptionType::AES) {
-			//TODO
+#ifndef NO_CRYPTOPP
+			CryptoppSecretKey crypto_secret_key = getCryptoppSecretKey(our_secret_key);
+			if (!our_encoder) {
+				our_encoder = std::make_shared<CryptoppAES>();
+				our_encoder->encoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
+				our_encoder->decoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
+				//update cache storage
+				{ std::lock_guard lock(m_peer_data_mutex);
+					if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+						it->second.aes_encoder = our_encoder;
+					}
+				}
+			}
+			//get the special iv for this exact message (crypto_secret_key is a copy, we can modify it)
+			for (size_t i = 0; i < crypto_secret_key.iv.size() - 7; i += 8) {
+				((uint64_t*)crypto_secret_key.iv.data())[i] ^= (message_counter + m_myself->getPeerId());
+			}
+			our_encoder->decoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
+			our_encoder->decoder.ProcessString(message.raw_array(), message.limit());
+#else
+			throw new std::exception("error, no cryptopp for aes");
+#endif
 		} else {
 			throw std::exception("Error, no secret protocol to use"); //TODO my exception
 		}

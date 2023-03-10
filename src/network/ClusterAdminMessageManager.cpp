@@ -263,9 +263,11 @@ namespace supercloud{
                 sender_data_old = clusterManager.getIdentityManager().getPeerData(sender);
                 sender_data = sender_data_old;
                 if( first_item.computer_id != sender->getComputerId()
-                    || first_item.rsa_public_key != sender_data.rsa_public_key.raw_data) {
+                    || first_item.rsa_public_key != sender_data.rsa_public_key.raw_data
+                    || first_item.rsa_type != sender_data.rsa_public_key.type) {
                     //problem, abord
                     error(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " Error, peer has send me a bad header for its ServerDatabaseMessage");
+                    assert(false);
                     return {};
                 } else {
                     //update our peer data
@@ -290,10 +292,11 @@ namespace supercloud{
                 IdentityManager::PeerData old_peer_data = clusterManager.getIdentityManager().getPeerData(peer);
                 IdentityManager::PeerData peer_data = old_peer_data;
                 //found, update informations about pub & priv interface if not present
-                if (peer_data.rsa_public_key.raw_data != it->rsa_public_key) {
+                if (peer_data.rsa_public_key.raw_data != it->rsa_public_key
+                    || it->rsa_type != peer_data.rsa_public_key.type) {
                     //error, different pub key than expected
                     error("Error, a public key is in conflict, abord useServerDatabaseMessage merge.");
-                    continue;
+                    assert(false);
                 } else {
                     bool modified = false;
                     // if no private interface, set the last good known one.
@@ -331,6 +334,7 @@ namespace supercloud{
                 IdentityManager::PeerData peer_data;
                 log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ClusterAdminMessageManager) set public key");
                 peer_data.rsa_public_key.raw_data = it->rsa_public_key;
+                peer_data.rsa_public_key.type = it->rsa_type;
                 if (it->last_private_interface) {
                     peer_data.private_interface = IdentityManager::PeerConnection{ it->last_private_interface->first, it->last_private_interface->second, false };
                     log(std::to_string(clusterManager.getPeerId() % 100) + "<-" + (sender->getPeerId() % 100)
@@ -398,6 +402,7 @@ namespace supercloud{
                 item.current_state = peer->getState();
                 auto aeff_test = clusterManager.getIdentityManager().getSelfPeerData();
                 item.rsa_public_key = data.rsa_public_key.raw_data;
+                item.rsa_type = data.rsa_public_key.type;
                 assert(!item.rsa_public_key.empty());
                 if (data.private_interface) {
                     item.last_private_interface = { data.private_interface->address, data.private_interface->port };
@@ -411,7 +416,8 @@ namespace supercloud{
                     rsa_log_str += u8_hex(c);
                 }
                 log(std::to_string(clusterManager.getPeerId() % 100) + " (ClusterAdminMessageManager) write database entry: pid:" + (item.last_peer_id % 100)
-                    + " cid=" + item.computer_id + " ip=" + (data.private_interface? data.private_interface->address:"") + " port=" + (data.private_interface ? data.private_interface->port : 0) + " pubkey=" + rsa_log_str+ "(" + data.rsa_public_key.raw_data.size() + ")\n");
+                    + " cid=" + item.computer_id + " ip=" + (data.private_interface? data.private_interface->address:"") + " port=" + (data.private_interface ? data.private_interface->port : 0) 
+                    + " pubkey={" + rsa_log_str+ "}"+ uint8_t(data.rsa_public_key.type) +" (" + data.rsa_public_key.raw_data.size() + ")\n");
             }
         }
         return ret_list;
@@ -434,6 +440,7 @@ namespace supercloud{
             //the rsa key to identify it
             buff.putSize(peer.rsa_public_key.size());
             buff.put(peer.rsa_public_key);
+            buff.put(uint8_t(peer.rsa_type));
             assert(!peer.rsa_public_key.empty());
             //the known current state of this computer in the network
             buff.put(peer.current_state);
@@ -470,6 +477,7 @@ namespace supercloud{
             //the rsa key to identify it
             size_t pub_size = buff.getSize();
             peer.rsa_public_key = buff.get(pub_size);
+            peer.rsa_type = IdentityManager::EncryptionType(buff.get());
             //the known current state of this computer in the network
             peer.current_state = Peer::ConnectionState(buff.get());
             //the private interface (if any)
@@ -490,7 +498,7 @@ namespace supercloud{
                 rsa_log_str += u8_hex(c);
             }
             log(std::to_string(clusterManager.getPeerId() % 100) + " (ClusterAdminMessageManager) read database entry: pid:"+ (peer.last_peer_id%100)
-                +" cid="+ peer.computer_id+" ip="+ priv_addr+" port="+ priv_port+" pubkey="+ rsa_log_str +"("+ peer.rsa_public_key.size() +")\n");
+                +" cid="+ peer.computer_id+" ip="+ priv_addr+" port="+ priv_port+" pubkey={"+ rsa_log_str +"}"+ uint8_t(peer .rsa_type)+" ("+ peer.rsa_public_key.size() +")\n");
         }
         return ret_list;
     }
