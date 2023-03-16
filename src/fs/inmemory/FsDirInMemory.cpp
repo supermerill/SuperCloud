@@ -7,6 +7,8 @@ namespace supercloud {
 
     FsDirectoryInMemory::FsDirectoryInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent)
         :FsDirectory(id, date, name, puga, parent) {}
+    FsDirectoryInMemory::FsDirectoryInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from)
+        : FsDirectory(id, date, name, puga, parent, renamed_from) {}
     void FsDirectoryInMemory::notifyModificationChained(FsID last_commit_id, DateTime date) {
         FsDirectory::notifyModification(last_commit_id, date);
         assert(m_loaded_parent || m_parent == m_id);

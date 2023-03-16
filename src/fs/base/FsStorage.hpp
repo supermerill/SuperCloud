@@ -46,9 +46,16 @@ namespace supercloud {
     constexpr uint16_t CUGA_AW = 0x0002;  // write permission, other
     constexpr uint16_t CUGA_AX = 0x0001;  // execute permission, other
 
+    /// <summary>
+    /// If it has a chunk id > 0, then raw_data should be nullptr and raw_data_size 0.
+    /// If raw_data is used, then it should point to a valid uint8_t buffer of at least raw_data_size entry (>0), and chunk_id and chunk_id_size should be set to 0.
+    /// chunk_size can be 0 even if chunk_id isn't because it's possible to not know the size of a speciifc chunk. But the sum of all chunk size must be correct.
+    /// </summary>
     struct ChunkOrRawData {
-        std::shared_ptr<FsChunk> chunk;
-        std::shared_ptr<ByteBuff> raw_data;
+        const FsID chunk_id;
+        const size_t chunk_size;
+        const uint8_t* raw_data;
+        const size_t raw_data_size;
     };
 
     class FsStorage {
@@ -92,7 +99,7 @@ namespace supercloud {
         /// <param name="file"></param>
         /// <param name="data"></param>
         /// <returns>new chunk</returns>
-        virtual FsChunkPtr addChunkToFile(FsFilePtr file, ByteBuff data) = 0;
+        virtual FsChunkPtr addChunkToFile(FsFilePtr file, uint8_t* new_data, size_t new_data_size) = 0;
 
         /// <summary>
         /// Create a new chunk, and place it at the position of 'old_chunk' inside old_chunk's file.
@@ -101,10 +108,11 @@ namespace supercloud {
         /// <param name="old"></param>
         /// <param name="new_data"></param>
         /// <returns>new chunk, or nullptr if it's a deletion</returns>
-        virtual FsChunkPtr modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, ByteBuff new_data) = 0;
+        virtual FsChunkPtr modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, uint8_t* new_data, size_t new_data_size) = 0;
 
         /// <summary>
         /// Change many chunks at the same time
+        /// note: chunk_id s from new_chunk are assumed to be already inside this file, and so no "parent" id is added to them.
         /// </summary>
         /// <param name="file"></param>
         /// <param name="new_chunks"></param>
@@ -122,7 +130,7 @@ namespace supercloud {
         /// <param name="chunks"></param>
         /// <param name="rights"></param>
         /// <returns>the new file</returns>
-        virtual FsFilePtr createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777) = 0;
+        virtual FsFilePtr createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777, FsFilePtr from = {}) = 0;
 
         /// <summary>
         /// Create a new file inside a directory, replacing another one.
@@ -146,7 +154,8 @@ namespace supercloud {
         /// <param name="data"></param>
         /// <param name="rights"></param>
         /// <returns>the new directory</returns>
-        virtual FsDirPtr createNewDirectory(FsDirPtr directory, const std::string& name, std::vector<FsObjectPtr> data = {}, CUGA rights = CUGA_7777) = 0;
+        virtual FsDirPtr createNewDirectory(FsDirPtr directory, const std::string& name, std::vector<FsObjectPtr> data = {}, CUGA rights = CUGA_7777, FsDirPtr from = {}) = 0;
+        virtual FsDirPtr createNewDirectory(FsDirPtr directory, const std::string& name, const std::vector<FsID>& data = {}, CUGA rights = CUGA_7777, FsDirPtr from = {}) = 0;
 
         /// <summary>
         /// Delete a file / directory

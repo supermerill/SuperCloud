@@ -31,6 +31,7 @@ namespace supercloud {
         size_t m_size;
 	public:
         FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) :FsObject(id, date, name, puga, parent) { assert(FsElt::isFile(id)); }
+        FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from) :FsObject(id, date, name, puga, parent, renamed_from) { assert(FsElt::isFile(id)); }
 
 		virtual std::tuple<FsID, DateTime> getLastModification() const override {
 			//std::lock_guard lock{ m_modify_load_mutex };

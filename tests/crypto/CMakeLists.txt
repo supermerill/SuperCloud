@@ -5,7 +5,8 @@ configure_file(../../src/network/IdentityManagerCrypto.cpp IdentityManagerCrypto
 include_directories(".")
 
 add_executable(${_TEST_NAME}_tests
-    test_cryptopp.cpp
+    test_cryptopp-rsa.cpp
+    test_cryptopp-aes.cpp
     IdentityManager.hpp
     IdentityManagerCrypto.cpp
     ../../src/utils/ByteBuff.hpp

@@ -8,6 +8,7 @@ namespace supercloud {
     class FsFileInMemory : public FsFile, public FsSerializableInMemory, public FsObjectInMemory {
     public:
         FsFileInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent);
+        FsFileInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from);
         static void serialize(FsFileInMemory* to_serialize, ByteBuff& buffer);
         static std::shared_ptr<FsFileInMemory> deserialize(FsID id, ByteBuff& buffer);
         void addChunk(std::shared_ptr<FsChunkInMemory> new_chunk);

@@ -7,6 +7,8 @@ namespace supercloud {
 
     FsFileInMemory::FsFileInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent)
         : FsFile(id, date, name, puga, parent) {}
+    FsFileInMemory::FsFileInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from)
+        : FsFile(id, date, name, puga, parent, renamed_from) {}
 
     void FsFileInMemory::serialize(FsFileInMemory* thi, ByteBuff& buffer) {
         std::cout << "File id=" << thi->getId() << "@" << buffer.position() << "\n";

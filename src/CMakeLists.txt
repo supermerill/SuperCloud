@@ -59,9 +59,10 @@ add_library(libsupercloud STATIC
 	synch/AbstractFSMessageManager.hpp
 	synch/ExchangeChunkMessageManager.cpp
 	synch/ExchangeChunkMessageManager.hpp
+    synch/FsExternalInterface.cpp
+    synch/FsExternalInterface.hpp
 	synch/SynchTreeMessageManager.cpp
 	synch/SynchTreeMessageManager.hpp
-	synch/RequestCheckForModification.hpp
 	synch/SynchroDb.cpp
 	synch/SynchroDb.hpp
 	os/FuseImpl.hpp

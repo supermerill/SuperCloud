@@ -18,6 +18,10 @@ namespace supercloud::test::inmemory {
 		return ByteBuff{ (uint8_t*)str.c_str(), str.size() };
 	}
 
+	void addChunkToFile(FsStorage& fs, FsFilePtr file, const std::string& str) {
+		fs.addChunkToFile(file, (uint8_t*)&str[0], str.size());
+	}
+
 	std::string toString(ByteBuff&& buff) {
 		std::string str;
 		for (int i = 0; i < buff.limit(); i++) {
@@ -41,9 +45,9 @@ namespace supercloud::test::inmemory {
 		FsFilePtr fic11_1 = fs.createNewFile(dir11, "fic11_1.txt");
 		FsFilePtr fi_readme = fs.createNewFile(root, "README.txt");
 
-		fs.addChunkToFile(fi_readme, StringBuff("Premier test de système de fichiers"));
-		fs.addChunkToFile(fic11_1, StringBuff("bla bla"));
-		fs.addChunkToFile(fic11_1, StringBuff("\n deuxième ligne"));
+		addChunkToFile(fs, fi_readme, ("Premier test de système de fichiers"));
+		addChunkToFile(fs, fic11_1, ("bla bla"));
+		addChunkToFile(fs, fic11_1, ("\n deuxième ligne"));
 
 
 		std::filesystem::path tmp_path{ std::filesystem::temp_directory_path() /= std::tmpnam(nullptr) };
@@ -100,9 +104,9 @@ namespace supercloud::test::inmemory {
 		FsFilePtr fic11_1 = fs.createNewFile(dir11, "fic11_1.txt");
 		FsFilePtr fi_readme = fs.createNewFile(root, "README.txt");
 
-		fs.addChunkToFile(fi_readme, StringBuff("Premier test de système de fichiers"));
-		fs.addChunkToFile(fic11_1, StringBuff("bla bla"));
-		fs.addChunkToFile(fic11_1, StringBuff("\n deuxième ligne"));
+		addChunkToFile(fs, fi_readme, ("Premier test de système de fichiers"));
+		addChunkToFile(fs, fic11_1, ("bla bla"));
+		addChunkToFile(fs, fic11_1, ("\n deuxième ligne"));
 		REQUIRE(fs.checkFilesystem());
 
 		//fake commits from cid 88
@@ -177,9 +181,9 @@ namespace supercloud::test::inmemory {
 		FsFilePtr fic11_1 = fs.createNewFile(dir11, "fic11_1.txt");
 		FsFilePtr fi_readme = fs.createNewFile(root, "README.txt");
 
-		fs.addChunkToFile(fi_readme, StringBuff("Premier test de système de fichiers"));
-		fs.addChunkToFile(fic11_1, StringBuff("bla bla"));
-		fs.addChunkToFile(fic11_1, StringBuff("\n deuxième ligne"));
+		addChunkToFile(fs, fi_readme, ("Premier test de système de fichiers"));
+		addChunkToFile(fs, fic11_1, ("bla bla"));
+		addChunkToFile(fs, fic11_1, ("\n deuxième ligne"));
 		REQUIRE(fs.checkFilesystem());
 
 		//fake commits from cid 88

@@ -114,6 +114,15 @@ namespace supercloud {
 
 		typedef std::shared_ptr<TreeAnswer> TreeAnswerPtr;
 
+		struct InvalidateElementsMessage {
+			ComputerId modifier;
+			DateTime last_invalidation_time;
+			std::vector<FsID> modified;
+			bool operator==(const InvalidateElementsMessage& other) const {
+				return modifier == other.modifier && modified == other.modified;
+			}
+		};
+
 	protected:
 
 		std::shared_ptr<FsStorage> m_filesystem;
@@ -167,5 +176,11 @@ namespace supercloud {
 		ByteBuff writeTreeAnswerMessage(const TreeAnswer& request);
 		TreeAnswer readTreeAnswerMessage(const ByteBuff& buffer);
 		void useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& answer);
+
+		// SEND_INVALIDATE_ELT
+		void emitModificationsNotification(std::unordered_map<FsID, Invalidation> modified);
+		ByteBuff writeInvalidateEltsMessage(const std::vector<InvalidateElementsMessage>& request);
+		std::vector<InvalidateElementsMessage> readInvalidateEltsMessage(const ByteBuff& buffer);
+		void useInvalidateEltsAnswer(const PeerPtr sender, const InvalidateElementsMessage& answer);
 	};
 }

@@ -13,7 +13,8 @@ namespace supercloud {
 	class FsChunk : public FsElt {
 	protected:
 		//my parents... maybe not necessary. Can be used as counter for destruction. The managment can be tedious?
-		std::vector<FsID> m_parents;
+		// yes, it's a bit of a chore to maintain... It also makes the chunk variable in size..
+		//std::vector<FsID> m_parents;
 		// a hash of the data, to check for integrity (xor each 64b of the data). xor the remaining bytes in the first byte.
 		const uint64_t m_hash;
 		bool m_is_local = false;
@@ -26,16 +27,18 @@ namespace supercloud {
 		/// </summary>
 		/// <returns></returns>
 		virtual bool checkIntegrity() {
-			ByteBuff buff;
-			this->read(buff, 0, size());
-			uint64_t hash = compute_naive_hash(buff.raw_array(), buff.limit());
+			std::vector<uint8_t> buff;
+			size_t my_size = size();
+			buff.resize(my_size);
+			this->read(&buff[0], 0, my_size);
+			uint64_t hash = compute_naive_hash(&buff[0], my_size);
 			return hash == m_hash;
 		}
 
 		uint64_t getHash() const { return m_hash; }
 
 		/// my parents (file ids)
-		std::vector<FsID> getParents() { return m_parents; }
+		//std::vector<FsID> getParents() { return m_parents; }
 		// add/remove parent?
 
 		//data
@@ -46,7 +49,7 @@ namespace supercloud {
 		 * @param size size of things readed.
 		 * @return true if possible. false if offset and size put us out of bounds.
 		 */
-		virtual bool read(ByteBuff& toAppend, size_t offset, size_t size) const = 0;
+		virtual bool read(uint8_t* toAppend, size_t offset, size_t size) const = 0;
 
 		/**
 		 * Write some bytes to this chunk.
@@ -86,11 +89,15 @@ namespace supercloud {
 	};
 
 	class FsChunkStub : public FsChunk {
-		FsChunkStub(FsID id, DateTime date, uint64_t hash) : FsChunk(id, date, hash) { m_is_local = false; }
+	protected:
+		size_t m_size;
+	public:
+		FsChunkStub(FsID id, DateTime date, uint64_t hash) : FsChunk(id, date, hash), m_size(0) { m_is_local = false; }
+		FsChunkStub(FsID id, size_t size) : FsChunk(id, 0, 0), m_size(size) { m_is_local = false; }
 
-		virtual bool read(ByteBuff& toAppend, size_t offset, size_t size) const override {};
-		virtual size_t size() { return 0; }
-		virtual DateTime getLastAccessDate() { return getDate(); }
+		bool read(uint8_t* toAppend, size_t offset, size_t size) const override {};
+		size_t size() const override { return m_size; }
+		DateTime getLastAccessDate() override { return getDate(); }
 	};
 
 }

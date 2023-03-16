@@ -4,12 +4,29 @@
 #include "fs/base/FsStorage.hpp"
 #include "fs/base/FsElt.hpp"
 #include "utils/Utils.hpp"
+#include "FsExternalInterface.hpp"
 
 #include <filesystem>
 #include <unordered_map>
 #include <optional>
 
 namespace supercloud {
+    class SynchTreeMessageManager;
+    class ExchangeChunkMessageManager;
+
+    class ChunkSizer {
+    public:
+        virtual size_t chooseChunkSize(FsFilePtr file, std::vector<size_t> current_sizes, size_t current_size, size_t new_size, size_t idx_new_chunk) = 0;
+    };
+
+    class BasicChunkSizer : public ChunkSizer {
+    public:
+        size_t chooseChunkSize(FsFilePtr file, std::vector<size_t> current_sizes, size_t current_size, size_t new_size, size_t idx_new_chunk) override {
+            if (new_size <= 4096) return new_size; // only one chunk for small files
+            if (idx_new_chunk == 0) return 4096; // first chunk is small as it's often requested
+            return std::max(new_size / 9, size_t(4096)); // try to have no more than 10 chunks, it's enough for a naive algorithm.
+        }
+    };
 
     struct SynchState {
         //this is the synch state for this computer.
@@ -20,8 +37,11 @@ namespace supercloud {
         DateTime last_commit_date;
         // date of the moment we where notified of it.
         DateTime last_commit_received_date;
-        // date of last itme we ask for a refresh of our knownledge.
+        // date of last time we ask for a refresh of our knownledge.
         DateTime last_fetch_date;
+        // date of the time where it nofified the world that it does something on the fs.
+        DateTime last_modification_date;
+        operator bool() const { return id != 0; }
     };
     struct ComputerState {
         //other informations about this computerid
@@ -49,7 +69,7 @@ namespace supercloud {
         Date date_information = 0; // when we get the information. Can be useful to evict old information that hasn't been refreshed since a long time.
     };
     struct Availability {
-        // wher eit's available, with the date of the last check.
+        // where it's available, with the date of the last check.
         std::unordered_map<ComputerId, ComputerAvailability> available;
         //number of times it was read locally. High number means that it's useful to keep this file here.
         size_t nb_read_local = 0;
@@ -57,8 +77,14 @@ namespace supercloud {
         ComputerId current_best_path = NO_COMPUTER_ID; //Note: it may be useful to also store the peerid?
     };
 
-    class SynchroDb {
-    protected:
+    struct Invalidation {
+        ComputerId modifier; // the computer that creates the invalidation 
+        ComputerId notifier; // the computer that notified us.
+    };
+
+    class SynchroDb : public AbstractMessageManager, public std::enable_shared_from_this<SynchroDb> {
+        friend FsExternalInterface; //TODO: remove that and use this SynchroDB class as gateway between FsExternalInterface and fsManager (for mutex exclusion, temp storage of chunks, and some cache?)
+    protected: 
 
         bool need_to_save = false;
 
@@ -66,6 +92,7 @@ namespace supercloud {
         /// The current state of the filesystem has taken into account these commits.
         /// </summary>
         std::unordered_map<ComputerId, SynchState> m_current_states;
+        std::mutex m_current_states_mutex;
 
         // what is available where
         std::unordered_map<FsID, Availability> m_known_availability;
@@ -75,27 +102,65 @@ namespace supercloud {
         /// our stats about the other peers, to know if they are reliable
         /// </summary>
         std::unordered_map<ComputerId, ComputerState> m_computer_states;
+        std::mutex m_computer_states_mutex;
+
+        static inline SynchState NO_SYNC_STATE = SynchState{};
+        static inline ComputerState NO_COMPUTER_STATE = ComputerState{};
+        
 
         /// <summary>
-        ///  the place where we store our local copy of the filesystem we synch.
+        /// how to size chunks when creating ones.
         /// </summary>
-        std::shared_ptr<FsStorage> m_file_storage;
+        std::shared_ptr<ChunkSizer> m_chunk_sizer;
+
+
+        /// <summary>
+        /// These elements are modified by another peer. Please fetch before using one of these.
+        /// note: you don't need to serialize these, as evrythign can be invalidated when we're not connected
+        /// </summary>
+        std::unordered_map<FsID, Invalidation> m_invalidated_2_modifier_notifier;
+        std::mutex m_invalidated_mutex;
+
+        // ------ notification for invalidation -----
+        std::mutex m_newly_invalidated_by_mutex;
+        std::unordered_map<FsID, Invalidation> m_newly_invalidated_2_modifier_notifier;
+        DateTime m_last_invalidation_sent;
+        Invalidation m_invalidated_by_me; // cache for getComputerId()
+
+
+        // ------ managers -------
 
         /// <summary>
         /// The ditributed network we use to communicate with other peers.
         /// </summary>
         std::shared_ptr<ClusterManager> m_network;
 
+        /// <summary>
+        ///  the place where we store our local copy of the filesystem we synch.
+        /// </summary>
+        std::shared_ptr<FsStorage> m_file_storage;
+        std::recursive_mutex m_file_storage_mutex;
 
 
+        std::shared_ptr<SynchTreeMessageManager> m_synch_tree;
+
+        std::shared_ptr<ExchangeChunkMessageManager> m_synch_chunk;
+
+        SynchroDb() {}
     public:
+        //factory
+        [[nodiscard]] static std::shared_ptr<SynchroDb> create() {
+            std::shared_ptr<SynchroDb> pointer = std::shared_ptr<SynchroDb>{ new SynchroDb(/*TODO*/) };
+            return pointer;
+        }
+
+        std::shared_ptr<SynchroDb> ptr() {
+            return shared_from_this();
+        }
 
         static inline Date MAX_RETENTION_DELETION_INFO = 60 * 24 * 30; // after 30 days, remove entries 'i don't have the chunk anymore'
 
-        void init(std::shared_ptr<FsStorage> file_storage, std::shared_ptr<ClusterManager> network) {
-            m_network = network;
-            m_file_storage = file_storage;
-        }
+        void init(std::shared_ptr<FsStorage> file_storage, std::shared_ptr<ClusterManager> network);
 
         /// <summary>
         /// It will create the different message manager and link them to the network and the file storage.
@@ -103,13 +168,14 @@ namespace supercloud {
         /// </summary>
         void launch();
 
+        void receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) override;
 
         /// <summary>
         /// has to be call some times per minute.
         /// It will fetch on accessible servers for latest updates, if no push have been received since a 'long' time.
         /// It will also emit push updates, or ping/ttl if nothing to share.
         /// </summary>
-        void update();
+        void update(DateTime current);
 
         /// <summary>
         /// received a fetch, update our 'last_fetch_date' for this ComputerId
@@ -128,6 +194,30 @@ namespace supercloud {
         /// <param name="commit_time"></param>
         bool mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db);
 
+        /// <summary>
+        /// Ensure that this element is up to date (for file & dir) and locally accessible (for chunk, but you should use retreiveChunks instead).
+        /// When the local filesystem is updated, it will call the callback with the updated (if any) element.
+        /// It will call with an empty ptr if there is the elmeent doesn't exist. If it was deleted, it will have its 'date_deleted' set, so don't only check for existence.
+        /// TODO: a promise version of it?
+        /// TODO: remove the answer compoenent of the callback (it's not used)?
+        /// </summary>
+        /// <param name="elt_to_get">Id of the element to refresh</param>
+        /// <param name="callback">Callback to call when the element is refreshed.</param>
+        void askForFsSynch(FsID elt_to_get, std::function<void(FsEltPtr answer)> callback);
+
+        /// <summary>
+        /// Retreive and store (at least temporary) the all chunk of 'file' to be able to read at least 'min_size' bytes.
+        /// </summary>
+        /// <param name="file">object file that contains current chunks ids to fetch</param>
+        /// <param name="size_min">Byte count to ensure we have (from 0)</param>
+        /// <param name="calback">callback to call when chunks are available via filesystem call. with false if the fetch wasn't possible.</param>
+        void retreiveChunks(FsFilePtr file, size_t min_size, std::function<void(bool)> calback);
+
+        void notifyObjectChanged(FsID id);
+
+        void addInvalidatedElements(const std::vector<FsID>& invadidated, ComputerId sender, ComputerId modifier, DateTime last_modif_time);
+        ComputerId isInvalidated(FsID to_test);
+
         void load(std::filesystem::path& file);
         void save(std::filesystem::path& file);
 
@@ -137,17 +227,19 @@ namespace supercloud {
             if (cid == 0) return NO_COMPUTER_ID;
             return cid;
         }
-        const ComputerState& getComputerState(ComputerId cid) {
+        ComputerState getComputerState(ComputerId cid) {
+            std::lock_guard lock{ m_computer_states_mutex };
             if (auto cstate = m_computer_states.find(cid); cstate != m_computer_states.end()) {
                 return cstate->second;
             }
-            return {};
+            return SynchroDb::NO_COMPUTER_STATE;
         }
-        const SynchState& getSynchState(ComputerId cid) {
+        SynchState getSynchState(ComputerId cid) {
+            std::lock_guard lock{ m_current_states_mutex };
             if (auto cstate = m_current_states.find(cid); cstate != m_current_states.end()) {
                 return cstate->second;
             }
-            return {};
+            return SynchroDb::NO_SYNC_STATE;
         }
         //return a copy, to be sure it's not invalidated by getAvailability (as it can create things) by another thread
         Availability getAvailability(FsID id) {
@@ -171,62 +263,6 @@ namespace supercloud {
             std::lock_guard lock{ m_known_availability_mutex };
             m_known_availability[id].available[cid] = availability;
         }
-    };
-
-    class FsExternalInterface {
-    protected:
-        std::shared_ptr<SynchroDb> m_db;
-
-    public:
-
-        struct RequestAnswer {
-            uint16_t error_code; // 0 if no error TODO:enum
-            std::string error_message; // empty if no error
-        };
-
-        struct ObjectRequestAnswer : RequestAnswer {
-            bool is_file;
-            FsObjectPtr object; //empty if error
-        };
-        /// <summary>
-        /// request a fs object at a path.
-        /// </summary>
-        /// <param name="path"></param>
-        /// <returns></returns>
-        std::future<ObjectRequestAnswer> get(const std::filesystem::path& path);
-        std::future<ObjectRequestAnswer> get(FsID id);
-        std::future<ObjectRequestAnswer> contains(FsDirPtr dir, const std::string& name);
-
-        //used to get the content of a directory
-        struct MultiObjectRequestAnswer : RequestAnswer {
-            std::vector<FsObjectPtr> objects;
-        };
-        std::future<MultiObjectRequestAnswer> getAll(std::vector<std::filesystem::path> paths);
-        std::future<MultiObjectRequestAnswer> getAll(std::vector<FsID> ids);
-
-        /// <summary>
-        /// request data from a file oebjct
-        /// </summary>
-        /// <param name="path"></param>
-        /// <returns></returns>
-        std::future<RequestAnswer> getData(FsFilePtr file, uint8_t* buffer, size_t offset, size_t size);
-        std::future<RequestAnswer> writeData(FsFilePtr file, uint8_t* buffer, size_t offset, size_t size);
-        std::future<ObjectRequestAnswer> resize(FsFilePtr file, size_t new_size);
-
-        /// <summary>
-        /// no future yet? (it's not needed?) Maybe it's more future-proof to use them anyway...
-        /// </summary>
-        /// <param name="obj"></param>
-        /// <returns></returns>
-        int createFile(FsDirPtr parent_dir, const std::string& name, CUGA rights);
-        int createDirectory(FsDirPtr parent_dir, const std::string& name, CUGA rights);
-        int removeObject(FsObjectPtr obj);
-        int moveObject(FsObjectPtr obj, const std::filesystem::path& new_path);
-        int setCUGA(FsObjectPtr obj, CUGA rights);
-
-        ComputerId getOurComputerId() { return m_db->getComputerId(); }
-        uint32_t getUserId(ComputerId cid) { return m_db->getComputerState(cid).user_id; }
-
     };
 
 

@@ -73,7 +73,7 @@ namespace supercloud{
 	uint16_t rand_u16();
 	uint8_t rand_u8();
 
-	uint64_t compute_naive_hash(uint8_t* buffer, size_t size);
+	uint64_t compute_naive_hash(const uint8_t* buffer, size_t size);
 
 	//inline void  compareDirect(const std::string& fileName, int min, int max);
 

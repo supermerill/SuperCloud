@@ -501,8 +501,11 @@ namespace supercloud {
             buff.putULong(answer.chunk->getId());
             buff.putLong(answer.chunk->getDate());
             buff.putULong(answer.chunk->getHash());
-            buff.putSize(answer.chunk->size());
-            answer.chunk->read(buff, 0, answer.chunk->size());
+            size_t chunk_size = answer.chunk->size();
+            buff.putSize(chunk_size);
+            buff.expand(chunk_size);
+            answer.chunk->read(buff.raw_array()+buff.position(), 0, chunk_size);
+            buff.position(buff.position() + chunk_size);
         }
         return buff.flip();
     }

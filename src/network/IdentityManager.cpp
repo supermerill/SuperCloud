@@ -662,9 +662,6 @@ namespace supercloud{
 
 	//note: the proposal/confirm thing work because i set my aes key before i emit my proposal.
 
-	std::vector<SecretKey> last_msg;
-	std::vector<SecretKey> last_msg_enc;
-	std::vector<SecretKey> last_encoded_msg;
 	void IdentityManager::sendAesKey(PeerPtr peer, uint8_t aesState) {
 		log(std::to_string(serv.getPeerId() % 100) + " (sendAesKey) emit SEND_SERVER_AES_KEY state:" + (int)(aesState)+" : " + ((aesState & AES_CONFIRM) != 0 ?  "CONFIRM" : "PROPOSAL") + " to " + peer->getPeerId() % 100+"\n");
 
@@ -698,13 +695,9 @@ namespace supercloud{
 			assert(secret_key.size() > 0);
 			buff_msg.putSize(secret_key.size()).put(secret_key);
 
-			last_msg.push_back(buff_msg.flip().getAll());
-
 			//encode msg 
 			std::vector<uint8_t> data_to_encode = buff_msg.flip().getAll();
 			encrypt(data_to_encode, their_pub_key);
-
-			last_msg_enc.push_back(data_to_encode);
 
 			//send it
 			buff_msg.reset();
@@ -712,7 +705,6 @@ namespace supercloud{
 			buff_msg.put(uint8_t(m_public_key.type));
 			buff_msg.put(uint8_t(their_pub_key.type));
 			buff_msg.putSize(data_to_encode.size()).put(data_to_encode);
-			last_encoded_msg.push_back(buff_msg.flip().getAll());
 
 			//send packet
 			peer->writeMessage(*UnnencryptedMessageType::SEND_SERVER_AES_KEY, buff_msg.flip());
@@ -755,7 +747,6 @@ namespace supercloud{
 				peer->close();
 				return false;
 			}
-			assert(contains(last_msg, aes_key_msg));
 			ByteBuff buff_aes;
 			buff_aes.put(aes_key_msg).flip();
 

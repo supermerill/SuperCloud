@@ -1,5 +1,5 @@
 
-//#define CATCH_CONFIG_DISABLE
+#define CATCH_CONFIG_DISABLE
 
 #include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
@@ -85,6 +85,10 @@ namespace supercloud::test::synchtree {
         return ByteBuff{ (uint8_t*)str.c_str(), str.size() };
     }
 
+    void addChunkToFile(FsStoragePtr fs, FsFilePtr file, const std::string& str) {
+        fs->addChunkToFile(file, (uint8_t*)&str[0], str.size());
+    }
+
     std::string toString(ByteBuff&& buff) {
         std::string str;
         for (int i = 0; i < buff.limit(); i++) {
@@ -94,7 +98,9 @@ namespace supercloud::test::synchtree {
     }
     inline ByteBuff readAll(FsChunk& chunk) {
         ByteBuff buffer;
-        chunk.read(buffer, 0, chunk.size());
+        buffer.expand(chunk.size());
+        chunk.read(buffer.raw_array(), 0, chunk.size());
+        buffer.position(buffer.position() + chunk.size());
         return buffer.flip();
     }
 
@@ -108,8 +114,9 @@ namespace supercloud::test::synchtree {
         std::shared_ptr<MyClock> clock = std::make_shared<MyClock>(serv);
         FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), clock } };
         //create synch
-        SynchPtr synch = SynchPtr{ new SynchroDb{} };
+        SynchPtr synch = SynchroDb::create();
         synch->init(fs, serv);
+        //synch->launch(); //create message manager
         //create chunk message manager
         MsgManaPtr chunk_mana = SynchTreeMessageManager::create(serv, fs, synch);
         return std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr>{fs, synch, chunk_mana};
@@ -258,18 +265,18 @@ namespace supercloud::test::synchtree {
 
         //now create  dirs & files in the serv2
         FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
-        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
-        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
-        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", std::vector<FsID>{}, CUGA_7777);
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", std::vector<FsID>{}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", std::vector<FsID>{}, CUGA_7777);
         FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        addChunkToFile(fs2, fs2_fic2, "fic2") ;
         REQUIRE(fs2_fic2->getCurrent().size() == 1);
         FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        addChunkToFile(fs2, fs2_fic12, ("fic12"));
         FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        addChunkToFile(fs2, fs2_fic112, ("fic112"));
         FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+        addChunkToFile(fs2, fs2_fic1112, ("fic1112"));
 
         REQUIRE(!fs1->hasLocally(fs2_dir11->getId()));
         REQUIRE(fs2->hasLocally(fs2_dir11->getId()));
@@ -341,7 +348,7 @@ namespace supercloud::test::synchtree {
 
         //now create  dirs & files in the serv2
         FsDirPtr fs2_root = ((FsStorageInMemory*)fs2.get())->createNewRoot();
-        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", {}, CUGA_7777);
+        FsDirPtr fs2_dir1 = fs2->createNewDirectory(fs2->loadDirectory(fs2->getRoot()), "dir1", std::vector<FsID>{}, CUGA_7777);
 
         REQUIRE(!fs1->hasLocally(fs2_dir1->getId()));
         REQUIRE(fs2->hasLocally(fs2_dir1->getId()));
@@ -362,17 +369,17 @@ namespace supercloud::test::synchtree {
 
         //create more directories & files
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", {}, CUGA_7777);
-        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", {}, CUGA_7777);
+        FsDirPtr fs2_dir11 = fs2->createNewDirectory(fs2_dir1, "dir11", std::vector<FsID>{}, CUGA_7777);
+        FsDirPtr fs2_dir111 = fs2->createNewDirectory(fs2_dir11, "dir111", std::vector<FsID>{}, CUGA_7777);
         FsFilePtr fs2_fic2 = fs2->createNewFile(fs2->loadDirectory(fs2->getRoot()), "fic2", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic2, stringToBuff("fic2"));
+        addChunkToFile(fs2, fs2_fic2, ("fic2"));
         REQUIRE(fs2_fic2->getCurrent().size() == 1);
         FsFilePtr fs2_fic12 = fs2->createNewFile(fs2_dir1, "fic12", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic12, stringToBuff("fic12"));
+        addChunkToFile(fs2, fs2_fic12, ("fic12"));
         FsFilePtr fs2_fic112 = fs2->createNewFile(fs2_dir11, "fic112", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic112, stringToBuff("fic112"));
+        addChunkToFile(fs2, fs2_fic112, ("fic112"));
         FsFilePtr fs2_fic1112 = fs2->createNewFile(fs2_dir111, "fic1112", {}, CUGA_7777);
-        fs2->addChunkToFile(fs2_fic1112, stringToBuff("fic1112"));
+        addChunkToFile(fs2, fs2_fic1112, ("fic1112"));
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         //now connected, test a sub-tree fetch

@@ -3,6 +3,7 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     test_main.cpp
     test_tree_synch.cpp
+    test_tree_update.cpp
     test_chunk_synch.cpp
     ../FakeNetwork.hpp
     ../FakeNetwork.cpp

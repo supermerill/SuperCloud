@@ -20,6 +20,7 @@ namespace supercloud {
 		}
 	public:
 		FsDirectory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) : FsObject(id, date, name, puga, parent) { assert(FsElt::isDirectory(id)); }
+		FsDirectory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from) : FsObject(id, date, name, puga, parent, renamed_from) { assert(FsElt::isDirectory(id)); }
 		virtual std::tuple<FsID, DateTime> getLastModification() const override {
 			return { this->m_last_modification_commit_id, this->m_last_modification_date };
 		}

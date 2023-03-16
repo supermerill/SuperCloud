@@ -78,31 +78,29 @@ namespace supercloud {
         return new_dir;
     }
 
-    FsChunkPtr FsStorageInMemory::addChunkToFile(FsFilePtr file, ByteBuff data) {
+    FsChunkPtr FsStorageInMemory::addChunkToFile(FsFilePtr file, uint8_t* new_data, size_t new_data_size) {
         std::lock_guard lock{ this->synchronize() };
         FsID new_id = getNextId(FsType::CHUNK);
         //create new chunk
         std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{
-            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), data.rewind(), 
-            compute_naive_hash(data.raw_array(), data.limit()), data.available()} };
+            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), new_data,
+            compute_naive_hash(new_data, new_data_size), new_data_size} };
         m_database[new_chunk->getId()] = new_chunk;
         static_cast<FsFileInMemory*>(file.get())->addChunk(new_chunk);
         static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(new_chunk->getId(), new_chunk->getDate());
-        new_chunk->addParent(file->getId());
         return new_chunk;
     }
 
-    FsChunkPtr FsStorageInMemory::modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, ByteBuff new_data) {
+    FsChunkPtr FsStorageInMemory::modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, uint8_t* new_data, size_t new_data_size) {
         std::lock_guard lock{ this->synchronize() };
         FsID new_id = getNextId(FsType::CHUNK);
         //create new chunk
         std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
-            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), new_data.rewind(), 
-            compute_naive_hash(new_data.raw_array(), new_data.limit()), new_data.available()} };
+            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), new_data, 
+            compute_naive_hash(new_data, new_data_size), new_data_size} };
         m_database[new_chunk->getId()] = new_chunk;
         static_cast<FsFileInMemory*>(file.get())->replaceChunk(old_chunk, new_chunk);
         static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(new_chunk->getId(), new_chunk->getDate());
-        new_chunk->addParent(file->getId());
         return new_chunk;
     }
 
@@ -120,23 +118,23 @@ namespace supercloud {
         size_t idx = 0;
         size_t file_size = 0;
         for (; idx < min_size; idx++) {
-            if (new_chunks[idx].chunk) {
-                if (old_chunks[idx] != new_chunks[idx].chunk->getId()) {
-                    commit.changes.push_back({ old_chunks[idx], new_chunks[idx].chunk->getId() });
+            if (new_chunks[idx].chunk_id != 0) {
+                assert(new_chunks[idx].raw_data == nullptr && new_chunks[idx].raw_data_size == 0);
+                if (old_chunks[idx] != new_chunks[idx].chunk_id) {
+                    commit.changes.push_back({ old_chunks[idx], new_chunks[idx].chunk_id });
                 }
-                new_file_content.push_back(new_chunks[idx].chunk->getId());
-                ((FsChunkInMemory*)new_chunks[idx].chunk.get())->addParent(file->getId());
-                file_size += new_chunks[idx].chunk->size();
+                new_file_content.push_back(new_chunks[idx].chunk_id);
+                file_size += new_chunks[idx].chunk_size;
             } else {
+                assert(new_chunks[idx].raw_data != nullptr && new_chunks[idx].raw_data_size > 0);
                 FsID new_id = getNextId(FsType::CHUNK);
                 std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
-                    new FsChunkInMemory {new_id, commit.date, new_chunks[idx].raw_data->rewind(), 
-                    compute_naive_hash(new_chunks[idx].raw_data->raw_array(), new_chunks[idx].raw_data->limit()), new_chunks[idx].raw_data->available()} };
+                    new FsChunkInMemory {new_id, commit.date, new_chunks[idx].raw_data, 
+                    compute_naive_hash(new_chunks[idx].raw_data, new_chunks[idx].raw_data_size), new_chunks[idx].raw_data_size} };
                 if (commit.id == 0) { commit.id = new_id; }
                 m_database[new_id] = new_chunk;
                 commit.changes.push_back({ old_chunks[idx], new_id });
                 new_file_content.push_back(new_id);
-                new_chunk->addParent(file->getId());
                 file_size += new_chunk->size();
             }
         }
@@ -144,21 +142,21 @@ namespace supercloud {
             commit.changes.push_back({ old_chunks[idx], 0 });
         }
         for (; idx < new_chunks.size(); idx++) {
-            if (new_chunks[idx].chunk) {
-                commit.changes.push_back({ 0, new_chunks[idx].chunk->getId() });
-                new_file_content.push_back(new_chunks[idx].chunk->getId());
-                ((FsChunkInMemory*)new_chunks[idx].chunk.get())->addParent(file->getId());
-                file_size += new_chunks[idx].chunk->size();
+            if (new_chunks[idx].chunk_id != 0) {
+                assert(new_chunks[idx].raw_data == nullptr && new_chunks[idx].raw_data_size == 0);
+                commit.changes.push_back({ 0, new_chunks[idx].chunk_id });
+                new_file_content.push_back(new_chunks[idx].chunk_id);
+                file_size += new_chunks[idx].chunk_size;
             } else {
+                assert(new_chunks[idx].raw_data != nullptr && new_chunks[idx].raw_data_size > 0);
                 FsID new_id = getNextId(FsType::CHUNK);
                 std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
-                    new FsChunkInMemory {new_id, commit.date, new_chunks[idx].raw_data->rewind(), 
-                    compute_naive_hash(new_chunks[idx].raw_data->raw_array(), new_chunks[idx].raw_data->limit()), new_chunks[idx].raw_data->available()} };
+                    new FsChunkInMemory {new_id, commit.date, new_chunks[idx].raw_data, 
+                    compute_naive_hash(new_chunks[idx].raw_data, new_chunks[idx].raw_data_size), new_chunks[idx].raw_data_size} };
                 if (commit.id == 0) { commit.id = new_id; }
                 m_database[new_id] = new_chunk;
                 commit.changes.push_back({ 0, new_id });
                 new_file_content.push_back(new_id);
-                new_chunk->addParent(file->getId());
                 file_size += new_chunk->size();
             }
         }
@@ -168,11 +166,18 @@ namespace supercloud {
         static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(commit.id, commit.date);
     }
 
-    FsFilePtr FsStorageInMemory::createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks, CUGA rights) {
+    FsFilePtr FsStorageInMemory::createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks, CUGA rights, FsFilePtr from) {
+        assert(directory);
+        assert(!name.empty());
         std::lock_guard lock{ this->synchronize() };
         FsID new_id = getNextId(FsType::FILE);
         DateTime time = (DateTime)m_clock->getCurrrentTime();
-        std::shared_ptr<FsFileInMemory> new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId()} };
+        std::shared_ptr<FsFileInMemory> new_file;
+        if (from) {
+            new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId(), from->getId()} };
+        } else {
+            new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId()} };
+        }
         new_file->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(directory));
         modifyFile(new_file, chunks);
         m_database[new_file->getId()] = new_file;
@@ -202,17 +207,30 @@ namespace supercloud {
         return {};
     }
 
-    FsDirPtr FsStorageInMemory::createNewDirectory(FsDirPtr directory_parent, const std::string& name, std::vector<FsObjectPtr> data, CUGA rights) {
-        std::lock_guard lock{ this->synchronize() };
-        FsID new_id = getNextId(FsType::DIRECTORY);
-        DateTime time = (DateTime)m_clock->getCurrrentTime();
-        std::shared_ptr<FsDirectoryInMemory> new_dir = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {new_id, time, name, rights, directory_parent ? directory_parent->getId() : new_id} };
+    FsDirPtr FsStorageInMemory::createNewDirectory(FsDirPtr directory_parent, const std::string& name, std::vector<FsObjectPtr> data, CUGA rights, FsDirPtr from) {
+        std::vector<FsID> vect;
         if (!data.empty()) {
-            std::vector<FsID> vect;
             for (FsObjectPtr& item : data) {
                 vect.push_back(item->getId());
             }
-            new_dir->setFiles(vect, new_dir->getId(), time);
+        }
+        return createNewDirectory(directory_parent, name, vect, rights, from);
+    }
+
+    FsDirPtr FsStorageInMemory::createNewDirectory(FsDirPtr directory_parent, const std::string& name, const std::vector<FsID>& data, CUGA rights, FsDirPtr from) {
+        assert(directory_parent);
+        std::lock_guard lock{ this->synchronize() };
+        FsID new_id = getNextId(FsType::DIRECTORY);
+        DateTime time = (DateTime)m_clock->getCurrrentTime();
+        std::shared_ptr<FsDirectoryInMemory> new_dir;
+        if (from) {
+            assert(directory_parent); // if renamed, it's not the root dir
+            new_dir = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {new_id, time, name, rights, directory_parent ? directory_parent->getId() : new_id, from->getId()} };
+        } else {
+            new_dir = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {new_id, time, name, rights, directory_parent ? directory_parent->getId() : new_id} };
+        }
+        if (!data.empty()) {
+            new_dir->setFiles(data, new_dir->getId(), time);
         }
         m_database[new_dir->getId()] = new_dir;
         if (directory_parent) {
@@ -322,46 +340,48 @@ myfile.close();
         return childs;
     }
 
-    size_t FsStorageInMemory::createNewFileMergeCommit(FsID file_id, FsObjectCommit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks) {
-        std::lock_guard lock{ this->synchronize() };
-        size_t new_file_size = 0;
-        size_t min_size = std::min(new_chunks.size(), old_chunks.size());
-        size_t idx = 0;
-        for (; idx < min_size; idx++) {
-            if (old_chunks[idx] != new_chunks[idx]) {
-                commit.changes.push_back({ old_chunks[idx], new_chunks[idx] });
-                if (FsChunkPtr chunk = loadChunk(new_chunks[idx]); chunk) {
-                    static_cast<FsChunkInMemory*>(chunk.get())->addParent(file_id);
-                    new_file_size += chunk->size();
-                } else {
-                    //create distant one
-                    std::shared_ptr<FsChunkInMemory> new_stub_chunk = std::shared_ptr<FsChunkInMemory>{
-                        new FsChunkInMemory{new_chunks[idx], 0, 0, 0} };
-                    new_stub_chunk->addParent(file_id);
-                    m_database[new_chunks[idx]] = new_stub_chunk;
-                    new_file_size += new_stub_chunk->size(); //FIXME?
-                }
-            }
-        }
-        for (; idx < old_chunks.size(); idx++) {
-            commit.changes.push_back({ old_chunks[idx], 0 });
-        }
-        for (; idx < new_chunks.size(); idx++) {
-            commit.changes.push_back({ 0, new_chunks[idx] });
-            if (FsChunkPtr chunk = loadChunk(new_chunks[idx]); chunk) {
-                static_cast<FsChunkInMemory*>(chunk.get())->addParent(file_id);
-                new_file_size += chunk->size();
-            } else {
-                //create distant one
-                std::shared_ptr<FsChunkInMemory> new_stub_chunk = std::shared_ptr<FsChunkInMemory>{
-                    new FsChunkInMemory{new_chunks[idx], 0, 0, 0} };
-                new_stub_chunk->addParent(file_id);
-                m_database[new_chunks[idx]] = new_stub_chunk;
-                new_file_size += new_stub_chunk->size(); //FIXME?
-            }
-        }
-        return new_file_size;
-    }
+    //size_t FsStorageInMemory::createNewFileMergeCommit(FsID file_id, FsObjectCommit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks, const size_t new_size) {
+    //    std::lock_guard lock{ this->synchronize() };
+    //    size_t new_file_size = 0;
+    //    size_t min_size = std::min(new_chunks.size(), old_chunks.size());
+    //    size_t idx = 0;
+    //    bool unknown_size = false;
+    //    for (; idx < min_size; idx++) {
+    //        if (old_chunks[idx] != new_chunks[idx]) {
+    //            commit.changes.push_back({ old_chunks[idx], new_chunks[idx] });
+    //            if (FsChunkPtr chunk = loadChunk(new_chunks[idx]); chunk) {
+    //                new_file_size += chunk->size();
+    //            } else {
+    //                //create distant one
+    //                std::shared_ptr<FsChunkInMemory> new_stub_chunk = std::shared_ptr<FsChunkInMemory>{
+    //                    new FsChunkInMemory{new_chunks[idx], 0, 0, 0} };
+    //                m_database[new_chunks[idx]] = new_stub_chunk;
+    //                new_file_size += new_stub_chunk->size(); //FIXME?
+    //                unknown_size = true;
+    //            }
+    //        }
+    //    }
+    //    for (; idx < old_chunks.size(); idx++) {
+    //        commit.changes.push_back({ old_chunks[idx], 0 });
+    //    }
+    //    for (; idx < new_chunks.size(); idx++) {
+    //        commit.changes.push_back({ 0, new_chunks[idx] });
+    //        if (FsChunkPtr chunk = loadChunk(new_chunks[idx]); chunk) {
+    //            new_file_size += chunk->size();
+    //        } else {
+    //            //create distant one
+    //            std::shared_ptr<FsChunkInMemory> new_stub_chunk = std::shared_ptr<FsChunkInMemory>{
+    //                new FsChunkInMemory{new_chunks[idx], 0, 0, 0} };
+    //            m_database[new_chunks[idx]] = new_stub_chunk;
+    //            new_file_size += new_stub_chunk->size(); //FIXME?
+    //        }
+    //    }
+    //    if (new_size != 0 && new_size != size_t(-1)) {
+    //        new_file_size = new_size;
+    //        assert(unknown_size || new_file_size == new_size);
+    //    }
+    //    return new_file_size;
+    //}
 
     bool verify_extra_db_contains(FsID id, const std::unordered_map<FsID, const FsElt*>& extra_db) {
         bool ok = true;

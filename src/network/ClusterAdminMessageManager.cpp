@@ -52,7 +52,8 @@ namespace supercloud{
             //create & send
             std::vector<DataSendServerDatabaseItem> my_database_to_send = this->createSendServerDatabase(allPeers);
             if (!my_database_to_send.empty()) {
-                sender->writeMessage(*UnnencryptedMessageType::SEND_SERVER_DATABASE, this->createSendServerDatabaseMessage(my_database_to_send));
+                ByteBuff msg_buffer = this->createSendServerDatabaseMessage(my_database_to_send);
+                sender->writeMessage(*UnnencryptedMessageType::SEND_SERVER_DATABASE, msg_buffer);
             }
         }
         if (messageId == *UnnencryptedMessageType::SEND_SERVER_DATABASE) {

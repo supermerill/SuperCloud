@@ -1,6 +1,6 @@
 
 #include "FuseInterface.hpp"
-#include "synch/SynchroDb.hpp"
+#include "synch/FsExternalInterface.hpp"
 #include "fs/base/FsStorage.hpp"
 #include "fs/base/FsObject.hpp"
 #include "fs/base/FsFile.hpp"

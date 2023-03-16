@@ -91,6 +91,7 @@ namespace supercloud{
 		CryptoppSecretKey() : key(CryptoPP::AES::DEFAULT_KEYLENGTH), iv(CryptoPP::AES::BLOCKSIZE){};
 		CryptoppSecretKey(const SecretKey& n_key, const SecretKey& n_iv) : key(n_key.data(), n_key.size()), iv(n_iv.data(), n_iv.size()) {}
 	};
+
 	CryptoppSecretKey  getCryptoppSecretKey(const SecretKey& sec_key) {
 		ByteBuff buff;
 		buff.put(sec_key).flip();
@@ -105,6 +106,7 @@ namespace supercloud{
 		save_pub_key.putSize(sec_key.iv.size()).put(sec_key.iv.data(), sec_key.iv.size());
 		saved_key = save_pub_key.flip().getAll();
 	}
+
 	typedef std::vector<uint8_t> VecByte;
 	VecByte cryptopp_sign(const VecByte& data, CryptoPP::RSA::PrivateKey private_key) {
 		// signer
@@ -154,6 +156,7 @@ namespace supercloud{
 		//finished
 		return data_out;
 	}
+
 	VecByte cryptopp_decrypt(const VecByte& data, CryptoPP::RSA::PrivateKey private_key) {
 		//decryptor
 		CryptoPP::RSAES_OAEP_SHA_Decryptor decryptor{ private_key };

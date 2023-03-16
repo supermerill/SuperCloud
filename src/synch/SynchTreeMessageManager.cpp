@@ -20,6 +20,7 @@ namespace supercloud {
 		m_cluster_manager->registerListener(*SynchMessagetype::SEND_TREE, this->ptr());
 		m_cluster_manager->registerListener(*SynchMessagetype::GET_HOST_PROPERTIES, this->ptr()); //TODO
 		m_cluster_manager->registerListener(*SynchMessagetype::SEND_HOST_PROPERTIES, this->ptr()); //TODO
+		m_cluster_manager->registerListener(*SynchMessagetype::SEND_INVALIDATE_ELT, this->ptr());
 		// fetch each minute
 		m_cluster_manager->registerListener(*UnnencryptedMessageType::TIMER_MINUTE, this->ptr()); //TODO
 	}
@@ -44,10 +45,83 @@ namespace supercloud {
 		} else if (message_id == *SynchMessagetype::SEND_HOST_PROPERTIES) {
 			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_HOST_PROPERTIES from " + sender->getPeerId());
 			//TODO
+		} else if (message_id == *SynchMessagetype::SEND_INVALIDATE_ELT) {
+			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE SEND_INVALIDATE_ELT from " + sender->getPeerId());
+			std::vector<InvalidateElementsMessage> decoded_msgs = readInvalidateEltsMessage(message);
+			for (const InvalidateElementsMessage& decoded_msg : decoded_msgs) {
+				useInvalidateEltsAnswer(sender, decoded_msg);
+			}
 		} else if (message_id == *UnnencryptedMessageType::TIMER_MINUTE) {
 			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE TIMER_MINUTE from " + sender->getPeerId());
 			//TODO
+
 		}
+	}
+
+
+	void SynchTreeMessageManager::emitModificationsNotification(std::unordered_map<FsID, Invalidation> modified_2_modifier_notifier) {
+		std::unordered_map<ComputerId,std::vector<FsID>> modifier_2_modified;
+		for (const auto& entry : modified_2_modifier_notifier) {
+			modifier_2_modified[entry.second.modifier].push_back(entry.first);
+		}
+		DateTime current_time = m_cluster_manager->getCurrentTime();
+		for (PeerPtr peer : m_cluster_manager->getPeersCopy()) {
+			ComputerId send_to = peer->getComputerId();
+			//Create InvalidateElementsMessage
+			std::vector<InvalidateElementsMessage> msgs;
+			for (const auto& entry : modifier_2_modified) {
+				msgs.emplace_back();
+				msgs.back().modifier = entry.first;
+				msgs.back().modified = entry.second;
+				msgs.back().last_invalidation_time = current_time;
+				if (SynchState state = m_syncro->getSynchState(entry.first); state) {
+					msgs.back().last_invalidation_time = state.last_modification_date;
+				}
+				foreach(idptr, msgs.back().modified) {
+					if (modified_2_modifier_notifier[*idptr].notifier == send_to) idptr.erase();
+					else if (modified_2_modifier_notifier[*idptr].modifier == send_to) idptr.erase();
+				}
+				if (msgs.back().modified.empty()) {
+					msgs.erase(msgs.end() - 1);
+				}
+			}
+			//create buffer
+			ByteBuff buffer = writeInvalidateEltsMessage(msgs);
+			//emit to all connected peers
+			peer->writeMessage(*SynchMessagetype::SEND_INVALIDATE_ELT, buffer.rewind());
+		}
+	}
+	ByteBuff SynchTreeMessageManager::writeInvalidateEltsMessage(const std::vector<InvalidateElementsMessage>& answers) {
+		ByteBuff buffer;
+		buffer.putSize(answers.size());
+		for (const InvalidateElementsMessage& elt : answers) {
+			buffer.serializeComputerId(elt.modifier);
+			buffer.putLong(elt.last_invalidation_time);
+			buffer.putSize(elt.modified.size());
+			for (FsID id : elt.modified) {
+				buffer.putULong(id);
+			}
+		}
+		return buffer.flip();
+	}
+	std::vector<SynchTreeMessageManager::InvalidateElementsMessage> SynchTreeMessageManager::readInvalidateEltsMessage(const ByteBuff& buffer) {
+		std::vector<InvalidateElementsMessage> msgs;
+		size_t nb_msg = buffer.getSize();
+		for (size_t i_msg = 0; i_msg < nb_msg; ++i_msg) {
+			msgs.emplace_back();
+			InvalidateElementsMessage& msg = msgs.back();
+			msg.modifier = buffer.deserializeComputerId();
+			msg.last_invalidation_time = buffer.getLong();
+			size_t nb_roots = buffer.getSize();
+			for (size_t i_id = 0; i_id < nb_roots; ++i_id) {
+				msg.modified.push_back(buffer.getULong());
+			}
+		}
+		return msgs;
+
+	}
+	void SynchTreeMessageManager::useInvalidateEltsAnswer(const PeerPtr sender, const InvalidateElementsMessage& answer) {
+		m_syncro->addInvalidatedElements(answer.modified, sender->getComputerId(), answer.modifier, answer.last_invalidation_time);
 	}
 
 
@@ -125,7 +199,7 @@ namespace supercloud {
 				TreeRequest request;
 				request.roots.push_back(root);
 				request.depth = uint16_t(-1);
-				const SynchState& synch_state = m_syncro->getSynchState(peer->getComputerId());
+				SynchState synch_state = m_syncro->getSynchState(peer->getComputerId());
 				if (synch_state.id) {
 					request.last_commit_received = synch_state.last_commit;
 					request.last_fetch_time = synch_state.last_commit_received_date;

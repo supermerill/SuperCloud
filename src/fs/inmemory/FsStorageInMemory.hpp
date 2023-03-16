@@ -59,7 +59,7 @@ namespace supercloud {
         /// <param name="file"></param>
         /// <param name="data"></param>
         /// <returns>new chunk</returns>
-        virtual FsChunkPtr addChunkToFile(FsFilePtr file, ByteBuff data) override;
+        virtual FsChunkPtr addChunkToFile(FsFilePtr file, uint8_t* new_data, size_t new_data_size) override;
 
         /// <summary>
         /// Create a new chunk, and place it at the position of 'old_chunk' inside old_chunk's file.
@@ -68,7 +68,7 @@ namespace supercloud {
         /// <param name="old"></param>
         /// <param name="new_data"></param>
         /// <returns>new chunk, or nullptr if it's a deletion</returns>
-        virtual FsChunkPtr modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, ByteBuff new_data) override;
+        virtual FsChunkPtr modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, uint8_t* new_data, size_t new_data_size) override;
 
         /// <summary>
         /// Change many chunks at the same time
@@ -89,7 +89,7 @@ namespace supercloud {
         /// <param name="chunks"></param>
         /// <param name="rights"></param>
         /// <returns>the new file</returns>
-        virtual FsFilePtr createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777) override;
+        virtual FsFilePtr createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777, FsFilePtr from = {}) override;
 
         /// <summary>
         /// Create a new file inside a directory, replacing another one.
@@ -113,7 +113,8 @@ namespace supercloud {
         /// <param name="data"></param>
         /// <param name="rights"></param>
         /// <returns>the new directory</returns>
-        virtual FsDirPtr createNewDirectory(FsDirPtr directory_parent, const std::string& name, std::vector<FsObjectPtr> data = {}, CUGA rights = CUGA_7777) override;
+        virtual FsDirPtr createNewDirectory(FsDirPtr directory_parent, const std::string& name, std::vector<FsObjectPtr> data = {}, CUGA rights = CUGA_7777, FsDirPtr from = {}) override;
+        virtual FsDirPtr createNewDirectory(FsDirPtr directory_parent, const std::string& name, const std::vector<FsID>& data, CUGA rights = CUGA_7777, FsDirPtr from = {}) override;
 
         /// <summary>
         /// Delete a file / directory
@@ -144,6 +145,6 @@ namespace supercloud {
         //TODO: optimization for mergeCommits(const std::unordered_map<FsID, const FsElt*>& commits), by 'consuming' commits when done in recursive mode.
 
     protected:
-        size_t createNewFileMergeCommit(FsID file_id, FsObjectCommit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks);
+        //size_t createNewFileMergeCommit(FsID file_id, FsObjectCommit& commit, const std::vector<FsID>& old_chunks, const std::vector<FsID>& new_chunks);
     };
 }

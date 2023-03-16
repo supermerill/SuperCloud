@@ -639,6 +639,7 @@ namespace supercloud {
         //TODO: call a ClusterAdminMessageManager method instead, so we try to connect the best first
         for (PeerPtr& peer : getIdentityManager().getLoadedPeers()) {
             std::future<bool> wait = this->connect(peer, peer->getIP(), peer->getPort(), 1000);
+            //discard the future
         }
     }
 

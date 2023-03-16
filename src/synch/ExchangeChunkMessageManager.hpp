@@ -91,18 +91,19 @@ namespace supercloud {
 			FsChunkTempElt& operator=(const FsChunkTempElt&) = delete; // can't copy
 			bool operator==(const FsChunkTempElt& other) const { //for test, it's not an efficient compare.
 				bool ok = size() == other.size();
-				ok &= m_id == other.m_id && m_creation_date == other.m_creation_date && m_parents == other.m_parents && m_hash == other.m_hash && m_is_local == other.m_is_local;
+				ok &= m_id == other.m_id && m_creation_date == other.m_creation_date && m_hash == other.m_hash && m_is_local == other.m_is_local && size() == other.size();
 				if (ok) {
-					ByteBuff read1;
-					ByteBuff read2;
-					read(read1, 0, size());
-					other.read(read2, 0, size());
+					size_t data_size = size();
+					std::vector<uint8_t> read1(data_size, uint8_t(0));
+					std::vector<uint8_t> read2(data_size, uint8_t(0));
+					read(&read1[0], 0, data_size);
+					other.read(&read2[0], 0, data_size);
 					ok = read1 == read2;
 				}
 				return ok;
 			}
 			size_t real_file_offset; // offset in file
-			virtual bool read(ByteBuff& to_append, size_t offset, size_t size) const override {
+			virtual bool read(uint8_t* to_append, size_t offset, size_t size) const override {
 				if (m_real_chunk) {
 					return m_real_chunk->read(to_append, offset, size);
 				} else {
@@ -114,7 +115,7 @@ namespace supercloud {
 					if (size > /*m_partial_offset +*/ m_partial_data.limit()) {
 						return false;
 					}
-					to_append.put(m_partial_data.raw_array() + offset /*- m_partial_offset*/, size);
+					std::copy(m_partial_data.raw_array() + offset, m_partial_data.raw_array() + offset + size, to_append);
 					return true;
 				}
 			}

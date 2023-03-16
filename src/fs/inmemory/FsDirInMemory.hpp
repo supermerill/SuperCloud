@@ -9,6 +9,7 @@ namespace supercloud {
     class FsDirectoryInMemory : public FsDirectory, public FsSerializableInMemory, public FsObjectInMemory {
     public:
         FsDirectoryInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent);
+        FsDirectoryInMemory(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from);
         void notifyModificationChained(FsID last_commit_id, DateTime date);
         void addFile(std::shared_ptr<FsFileInMemory> file);
         void addDir(std::shared_ptr<FsDirectoryInMemory> file);
