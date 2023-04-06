@@ -103,7 +103,13 @@ protected:
 	bool decrypt(std::vector<uint8_t>& data, const PublicKeyHolder& peer_pub_key); // return false if the message is corrupted or wrong pub/priv key
 public:
 	IdentityManager(PhysicalServer& serv, std::unique_ptr<Parameters>&& parameters) : serv(serv), m_parameters(std::move(parameters)) {
-		m_myself = Peer::create(serv, "", 0, Peer::ConnectionState::US);
+		std::string ip = "";
+		uint16_t port = 0;
+		if (m_parameters) {
+			ip = m_parameters->get("publicIp", "");
+			port = m_parameters->getInt("publicPort", 0);
+		}
+		m_myself = Peer::create(serv, ip, port, Peer::ConnectionState::US);
 		m_peer_2_peerdata[m_myself].peer = m_myself;
 	}
 	IdentityManager& setInstallParameters(std::shared_ptr<Parameters> parameters) {
@@ -135,6 +141,10 @@ public:
 
 	int64_t getTimeChooseId(){ return timeChooseId; }
 	PublicKey getPublicKey() const { return m_public_key.raw_data; }
+#if _DEBUG
+	EncryptionType getPublicKeyType() const { return  m_public_key.type; }//for tests
+	PrivateKey getPrivateKey() const { return m_private_key; }//for tests
+#endif
 	PublicKey getPublicKey(PeerPtr key) const {
 		{ std::lock_guard lock{ this->m_peer_data_mutex };
 			auto it = m_peer_2_peerdata.find(key);

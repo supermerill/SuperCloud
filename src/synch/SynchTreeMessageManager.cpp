@@ -33,6 +33,8 @@ namespace supercloud {
 		}
 		if (message_id == *SynchMessagetype::GET_TREE) {
 			log(std::to_string(m_cluster_manager->getComputerId()) + "$ RECEIVE GET_TREE from " + sender->getPeerId());
+			//FIXME: check m_syncro->isInvalidated, and ask for update before answering if it's the case.
+			
 			TreeAnswer answer = answerTreeRequest(sender, readTreeRequestMessage(message));
 			sender->writeMessage(*SynchMessagetype::SEND_TREE, writeTreeAnswerMessage(answer));
 		} else if (message_id == *SynchMessagetype::SEND_TREE) {

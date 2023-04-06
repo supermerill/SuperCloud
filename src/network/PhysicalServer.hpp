@@ -112,7 +112,7 @@ namespace supercloud {
         /// <summary>
         /// The updater function, it emit some timers and keeps the list of peers tidy.
         /// </summary>
-        virtual void update();
+        virtual void update(bool force_timer_update = false);
         void log_peers();
 
         /// <summary>

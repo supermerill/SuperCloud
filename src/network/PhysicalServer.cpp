@@ -17,6 +17,13 @@ namespace supercloud {
     }
 
     std::shared_ptr<PhysicalServer> PhysicalServer::createAndInit(std::unique_ptr<Parameters>&& identity_parameters, std::shared_ptr<Parameters> install_parameters) {
+        if (install_parameters && install_parameters->has("PublicIp") && (!identity_parameters || !identity_parameters->has("publicIp"))) {
+            if (!identity_parameters) {
+                identity_parameters.reset(new InMemoryParameters());
+            }
+            identity_parameters->set("publicIp", install_parameters->get("PublicIp"));
+            identity_parameters->setInt("publicPort", install_parameters->getInt("PublicPort"));
+        }
         std::shared_ptr<PhysicalServer> ptr = std::shared_ptr<PhysicalServer>{ new PhysicalServer{} };
         ptr->m_cluster_id_mananger = std::make_shared<IdentityManager>(*ptr, std::move(identity_parameters));
         ptr->m_cluster_id_mananger->setInstallParameters(install_parameters);
@@ -51,6 +58,15 @@ namespace supercloud {
             std::thread updaterThread([me](){
                 std::cout << "launchUpdater launched\n";
                 while (true) {
+                    for (size_t i = 0; i < 100; i++) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        if (me->m_state.isClosed()) return;
+                    }
+                    for (size_t i = 0; i < 500; i++) //FIXME only for testing purpose to reduce clutter, delete
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10)); //FIXME only for testing purpose to reduce clutter, delete
+                        if (me->m_state.isClosed()) return;
+                    }
                     me->update();
                 }
             });
@@ -59,16 +75,7 @@ namespace supercloud {
     }
 
     int64_t update_check_NO_COMPUTER_ID = 0;
-    void PhysicalServer::update() {
-        for (size_t i = 0; i < 100; i++) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            if (this->m_state.isClosed()) return;
-        }
-        for (size_t i = 0; i < 500; i++) //FIXME only for testing purpose to reduce clutter, delete
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); //FIXME only for testing purpose to reduce clutter, delete
-            if (this->m_state.isClosed()) return;
-        }
+    void PhysicalServer::update(bool force_timer_update /*=false*/) {
         log(std::to_string(getPeerId() % 100) + " update, is closed? "+ this->m_state.isClosed());
         //bool quickUpdate = true;
         //can't update until you're connected
@@ -151,7 +158,7 @@ namespace supercloud {
             // If the peer is fully connected, emit timer message.
             if (peer->isConnected()) {
                 this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_SECOND, now_msg);
-                if (now - m_last_minute_update > 1000 * 60) {
+                if (now - m_last_minute_update > 1000 * 60 || force_timer_update) {
                     this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_MINUTE, now_msg);
                 }
             } else if(peer->isAlive()){
@@ -175,7 +182,7 @@ namespace supercloud {
             log(std::to_string(getPeerId() % 100) + " ======== peers =======");
             log(std::to_string(getPeerId() % 100) + " -ME- ip=" + me->getIP() + ":" +getListenPort() + " cid=" + me->getComputerId() + " alive:" + me->isAlive() + " state: " + Peer::connectionStateToString(me->getState()));
             for (PeerPtr& p : peers) {
-                log(std::to_string(getPeerId() % 100) + " pid=" + (p->getPeerId() % 100) + " ip=" + p->getIP() + ":" + p->getPort() + " cid=" + p->getComputerId() + " alive:" + p->isAlive() + " state: " + Peer::connectionStateToString(p->getState()));
+                log(std::to_string(getPeerId() % 100) + " pid=" + (p->getPeerId() % 100) + " ip=" + p->getIP() + ":" + p->getPort() + " ipr=" + p->getRemoteEndPoint().address() + ":" + p->getRemoteEndPoint().port() + " cid=" + p->getComputerId() + " alive:" + p->isAlive() + " state: " + Peer::connectionStateToString(p->getState()));
             }
             log(std::to_string(getPeerId() % 100) + " ======================");
         }
@@ -205,7 +212,7 @@ namespace supercloud {
                             //create this connection socket
                             std::shared_ptr<Socket> new_socket = me->m_listen_socket->listen();
                             log(std::to_string(me->getPeerId() % 100) + " connected to a socketserver\n");
-                            PeerPtr peer = Peer::create(*me, new_socket->local_endpoint().address(), new_socket->local_endpoint().port(), Peer::ConnectionState::TEMPORARY | Peer::ConnectionState::CONNECTING);
+                            PeerPtr peer = Peer::create(*me, new_socket->remote_endpoint().address(), new_socket->remote_endpoint().port(), Peer::ConnectionState::TEMPORARY | Peer::ConnectionState::CONNECTING);
                             std::thread clientSocketThread([me, peer, new_socket]() {
                                 try {
                                     //new socket -> update private interface

@@ -149,7 +149,9 @@ namespace supercloud {
 		friend class ComputerIdSetter;
 	protected:
 
-		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state) : m_state(state), myServer(physicalServer), m_address(inetAddress), m_port(port), createdAt(get_current_time_milis()) {}
+		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state) : m_state(state), myServer(physicalServer), m_address(inetAddress), m_port(port), createdAt(get_current_time_milis()) {
+			std::cout << "create peer\n";
+		}
 
 	public:
 		const int64_t createdAt;
@@ -208,6 +210,8 @@ namespace supercloud {
 		/// </summary>
 		/// <returns></returns>
 		std::string getLocalIPNetwork() const;
+		EndPoint getLocalEndPoint() const;
+		EndPoint getRemoteEndPoint() const;
 
 		uint16_t getPort() const {
 			return m_port;

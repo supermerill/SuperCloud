@@ -95,9 +95,15 @@ namespace supercloud{
 					createNewPublicKey(getDefaultRSAEncryptionType());
 				}
 			} else {
-				//TODO : get key from unicode string
-				//publicKey = paramsNet.;
-				throw operation_not_implemented("pub/priv load key is not implemented yet");
+				// copy keys
+				this->m_private_key = from_hex(paramsNet.get("PrivKey"));
+				this->m_public_key.type = paramsNet.get("PubKeyType") == "RSA" ? EncryptionType::RSA : paramsNet.get("PubKeyType") == "NONE" ? EncryptionType::NO_ENCRYPTION : EncryptionType::NAIVE;
+				this->m_public_key.raw_data = from_hex(paramsNet.get("PubKey"));
+				// this->publicKey is just a cache for m_peer_2_peerdata[getComputerId()].rsa_public_key
+				{std::lock_guard lock(m_peer_data_mutex);
+					assert(m_peer_2_peerdata.find(m_myself) != m_peer_2_peerdata.end());
+					m_peer_2_peerdata[this->m_myself].rsa_public_key = this->m_public_key;
+				}
 			}
 		}
 
@@ -192,6 +198,8 @@ namespace supercloud{
 		if (this->m_myself->getPeerId() != 0 && this->m_myself->getPeerId() != NO_PEER_ID) {
 			params_server_db.setLong("peerId", this->m_myself->getPeerId());
 		}
+		params_server_db.set("publicIp", this->m_myself->getIP());
+		params_server_db.setInt("publicPort", this->m_myself->getPort());
 		params_server_db.set("passphrase", this->m_passphrase);
 		params_server_db.setInt("publicKeyType", uint8_t(this->m_public_key.type));
 		params_server_db.set("publicKey", to_hex(this->m_public_key.raw_data));

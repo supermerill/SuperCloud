@@ -16,6 +16,14 @@ namespace supercloud {
 		if (!this->m_socket) return "";
 		return this->m_socket->get_local_ip_network();
 	}
+	EndPoint Peer::getLocalEndPoint() const {
+		if (!this->m_socket) return EndPoint{ "",0 };
+		return this->m_socket->local_endpoint();
+	}
+	EndPoint Peer::getRemoteEndPoint() const {
+		if (!this->m_socket) return EndPoint{"",0};
+		return this->m_socket->remote_endpoint();
+	}
 
 	void Peer::setPeerId(PeerId new_id) {
 		if (myServer.getIdentityManager().getSelfPeer().get() == this) {

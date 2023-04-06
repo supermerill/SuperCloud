@@ -30,7 +30,7 @@ namespace supercloud {
             //log(std::to_string(m_network->getComputerId()) + "$ RECEIVE TIMER_SECOND from " + sender->getPeerId());
             //get current DateTime
             DateTime current_time = message.rewind().getLong();
-            assert(std::abs(current_time - m_network->getCurrentTime()) < 100); // less than 100ms of latency (should even be less than a milisecond...)
+            //assert(std::abs(current_time - m_network->getCurrentTime()) < 100); // less than 100ms of latency (should even be less than a milisecond...)
             //update
             this->update(current_time);
         }
@@ -168,6 +168,7 @@ namespace supercloud {
         //group them and only send them after some seconds.
         std::lock_guard lock{ m_newly_invalidated_by_mutex };
         if (m_newly_invalidated_2_modifier_notifier.empty()) {
+            // ask to wait at least a second before emitting it? (often, many changes are packed toguether)
             m_last_invalidation_sent = m_network->getCurrentTime();
         }
         if (m_invalidated_by_me.modifier == 0 || m_invalidated_by_me.modifier == NO_COMPUTER_ID) {

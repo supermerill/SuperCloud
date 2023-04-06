@@ -263,6 +263,16 @@ namespace supercloud {
             std::lock_guard lock{ m_known_availability_mutex };
             m_known_availability[id].available[cid] = availability;
         }
+
+#ifdef _DEBUG
+        std::unordered_map<FsID, Invalidation> get_test_wait_current_invalidation() {
+            return m_newly_invalidated_2_modifier_notifier;
+        }
+
+        void test_emit_invalidation_quick() {
+            m_last_invalidation_sent = 0;
+        }
+#endif
     };
 
 

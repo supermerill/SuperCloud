@@ -140,7 +140,7 @@ namespace supercloud {
 			DateTime start = 0;
 			DateTime finished_since = 0;
 		};
-		std::mutex m_mutex_incomplete_requests;
+		std::recursive_mutex m_mutex_incomplete_requests;
 		std::unordered_map<ComputerId, TreeAnswerRequest> m_incomplete_requests;
 
 		void register_listener();

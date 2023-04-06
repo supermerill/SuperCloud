@@ -237,7 +237,7 @@ namespace supercloud{
 			assert(m_peer_2_peerdata.find(m_myself) != m_peer_2_peerdata.end());
 			m_peer_2_peerdata[this->m_myself].rsa_public_key = this->m_public_key;
 		}
-		requestSave();
+		//requestSave(); // should be done by caller
 	}
 
 	//PrivateKey IdentityManager::createPrivKey(const std::vector<uint8_t>& datas) {

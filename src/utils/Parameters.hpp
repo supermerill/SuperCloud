@@ -208,6 +208,7 @@ namespace supercloud {
 				for (const auto& entry : m_data) {
 					out << entry.first << ' ' << entry.second << '\n';
 				}
+				out.close();
 				// swap temp & fic file (rename erase fic)
 				std::filesystem::rename(ficTemp, fic);
 			}

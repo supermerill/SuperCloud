@@ -41,6 +41,10 @@ namespace supercloud {
         std::string path_next = path.u8string();
         assert(path_next[0] == path.preferred_separator);
         path_next = path_next.substr(1);
+        if (!fs.hasLocally(fs.getRoot())) {
+            m_db->askForFsSynch(fs.getRoot(), [path, promise_ptr, this](FsEltPtr result) { this->get(path, promise_ptr); });
+            return;
+        }
         FsDirPtr dir = fs.loadDirectory(fs.getRoot());
         size_t next_sep = path_next.find_first_of(path.preferred_separator);
 
