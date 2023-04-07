@@ -1,5 +1,5 @@
 
-#define CATCH_CONFIG_DISABLE
+//#define CATCH_CONFIG_DISABLE
 
 #include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
@@ -174,8 +174,9 @@ namespace supercloud::test::synchtree {
             for (uint16_t i = 0; i < uint16_t(100); i++) {
                 if (rand_u8() % 4 == 1) {
                     //(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state)
+                    size_t new_size = rand_u63();
                     data_1.created.push_back(SynchTreeMessageManager::FsObjectTreeAnswerPtr{ new SynchTreeMessageManager::FsObjectTreeAnswer{
-                        newid(), rand_u16(), rand_u63(), get_current_time_milis(), "test", rand_u16(), newid(), uint32_t(rand_u63()), std::vector<FsID>{ newid(), newid() }} });
+                        newid(), rand_u16(), new_size, get_current_time_milis(), "test", rand_u16(), newid(), uint32_t(rand_u63()), std::vector<FsID>{ newid(), newid() }, std::vector<FsID>{ new_size-1, 1 }} });
                     if (rand_u8() % 2 == 1) {
                         data_1.created.back()->setCommit(rand_u63(), rand_u63());
                     }
@@ -188,8 +189,9 @@ namespace supercloud::test::synchtree {
             FsID last_commit_id;
             DateTime last_commit_time;
             std::vector<FsID> state;*/
+                    size_t new_size = rand_u63();
                     data_1.modified.push_back(SynchTreeMessageManager::TreeAnswerEltChange{ 
-                        newid(), rand_u16(), rand_u63(), rand_u63(), get_current_time_milis(), std::vector<FsID>{ newid() ,newid() ,newid() ,newid() } });
+                        newid(), rand_u16(), new_size, rand_u63(), get_current_time_milis(), std::vector<FsID>{ newid() ,newid() ,newid() ,newid() }, std::vector<FsID>{ new_size-3,1,1,1 } });
                 }
                 if (rand_u8() % 4 == 3) {
                     /*

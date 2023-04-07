@@ -114,7 +114,7 @@ namespace supercloud {
             return m_listen_from;
         }
         virtual EndPoint remote_endpoint() const override {
-            return EndPoint{ "",0 };
+            return m_connect_to;// EndPoint{ "",0 };
             //throw std::runtime_error("Error, remote_endpoint is problematic");
         }
         EndPoint request_endpoint() const {

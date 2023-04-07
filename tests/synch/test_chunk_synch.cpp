@@ -378,7 +378,7 @@ namespace supercloud::test::syncchunk {
 
         InMemoryParameters param_serv3 = createNewConfiguration();
         addEntryPoint(param_serv3, "192.168.0.1", 4242);
-        ServPtr serv3 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.4");
+        ServPtr serv3 = createPeerFakeNet(param_serv3, net_192_168_0, "192.168.0.4");
         auto [fs3, synch3, chunkmana3] = addFileSystem(serv3);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
@@ -493,13 +493,13 @@ namespace supercloud::test::syncchunk {
 
         InMemoryParameters param_serv3 = createNewConfiguration();
         addEntryPoint(param_serv3, "192.168.42.1", 4242);
-        ServPtr serv3 = createPeerFakeNets(param_serv2, { net_192_168_42, net_192_168_44 }, "0.0.0.3", 4242);
+        ServPtr serv3 = createPeerFakeNets(param_serv3, { net_192_168_42, net_192_168_44 }, "0.0.0.3", 4242);
         auto [fs3, synch3, chunkmana3] = addFileSystem(serv3);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         InMemoryParameters param_serv4 = createNewConfiguration();
         addEntryPoint(param_serv4, "192.168.44.3", 4242);
-        ServPtr serv4 = createPeerFakeNet(param_serv2, net_192_168_44, "192.168.44.4");
+        ServPtr serv4 = createPeerFakeNet(param_serv4, net_192_168_44, "192.168.44.4");
         auto [fs4, synch4, chunkmana4] = addFileSystem(serv4);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 

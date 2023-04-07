@@ -269,9 +269,12 @@ namespace supercloud {
 				buffer.putULong(0);
 				buffer.putLong(0);
 			}
-			buffer.putSize(added->getCurrent().size());
-			for (const FsID& id : added->getCurrent()) {
-				buffer.putULong(id);
+			const size_t curr_size = added->getCurrent().size();
+			buffer.putSize(curr_size);
+			assert(added->sizes().size() == curr_size);
+			for (size_t i = 0; i < curr_size; ++i) {
+				buffer.putULong(added->getCurrent()[i]);
+				buffer.putSize(added->sizes()[i]);
 			}
 		}
 		buffer.putSize(answer.modified.size());
@@ -281,9 +284,12 @@ namespace supercloud {
 			buffer.putSize(changed.elt_size);
 			buffer.putULong(changed.last_commit_id);
 			buffer.putLong(changed.last_commit_time);
-			buffer.putSize(changed.state.size());
-			for (const FsID& id : changed.state) {
-				buffer.putULong(id);
+			const size_t curr_size = changed.state.size();
+			buffer.putSize(curr_size);
+			assert(changed.sizes.size() == curr_size);
+			for (size_t i = 0; i < curr_size; ++i) {
+				buffer.putULong(changed.state[i]);
+				buffer.putSize(changed.sizes[i]);
 			}
 		}
 		buffer.putSize(answer.deleted.size());
@@ -315,10 +321,12 @@ namespace supercloud {
 			DateTime commit_date = buffer.getLong();
 			size_t added_Current_size = buffer.getSize();
 			std::vector<FsID> current;
+			std::vector<size_t> current_size;
 			for (size_t curr_idx = 0; curr_idx < added_Current_size; ++curr_idx) {
 				current.push_back(buffer.getULong());
+				current_size.push_back(buffer.getSize());
 			}
-			answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ added_Id , added_Depth , added_size, added_Date , added_Name , added_CUGA , added_Parent , added_GroupId, current } });
+			answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ added_Id , added_Depth , added_size, added_Date , added_Name , added_CUGA , added_Parent , added_GroupId, current, current_size } });
 			if (commit_id != 0) {
 				answer.created.back()->setCommit(commit_id, commit_date);
 			}
@@ -333,8 +341,10 @@ namespace supercloud {
 			answer.modified.back().last_commit_time = buffer.getLong();
 			size_t state_size = buffer.getSize();
 			std::vector<FsID>& current = answer.modified.back().state;
+			std::vector<size_t>& current_sizes = answer.modified.back().sizes;
 			for (size_t curr_idx = 0; curr_idx < state_size; ++curr_idx) {
 				current.push_back(buffer.getULong());
+				current_sizes.push_back(buffer.getSize());
 			}
 		}
 		size_t deleted_size = buffer.getSize();
@@ -362,7 +372,7 @@ namespace supercloud {
 					// the object has been created after the last fetch
 					//created
 					answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ elt_id , object->getDepth() , object->size(), object->getDate() , object->getName() ,
-						object->getCUGA() , object->getParent() , object->getGroupId(), object->getCurrent() } });
+						object->getCUGA() , object->getParent() , object->getGroupId(), object->getCurrent(), object->sizes() } });
 					if (object->getCommitsSize() > 0) {
 						answer.created.back()->setCommit(object->getCommit(object->getCommitsSize() - 1).id, object->getCommit(object->getCommitsSize() - 1).date);
 					}
@@ -522,13 +532,13 @@ namespace supercloud {
 				db_stubs[obj->getId()] = obj.get();
 			}
 			for (const TreeAnswerEltChange& obj : answer.modified) {
-				stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.elt_size, obj.state);
+				stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.elt_size, obj.state, obj.sizes);
 				stub_storage.back().setCommit(obj.last_commit_id, obj.last_commit_time);
 				ordered_stubs[obj.elt_depth] = &stub_storage.back();
 				db_stubs[obj.elt_id] = &stub_storage.back();
 			}
 			for (const TreeAnswerEltDeleted& obj : answer.deleted) {
-				stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.elt_size, std::vector<FsID>{});
+				stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.elt_size, std::vector<FsID>{}, std::vector<size_t>{});
 				stub_storage.back().setCommit(obj.last_commit_id, obj.last_commit_time)
 					.setDeleted(obj.renamed_to, obj.last_commit_time);
 				ordered_stubs[obj.elt_depth] = &stub_storage.back();

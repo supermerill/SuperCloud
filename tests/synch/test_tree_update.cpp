@@ -1,5 +1,5 @@
 
-//#define CATCH_CONFIG_DISABLE
+#define CATCH_CONFIG_DISABLE
 
 #include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
@@ -21,6 +21,7 @@
 #include "fs/inmemory/FsStorageInMemory.hpp"
 #include "synch/SynchTreeMessageManager.hpp"
 #include "synch/SynchroDb.hpp"
+#include "synch/FsExternalInterface.hpp"
 
 namespace supercloud::test::updateree {
     typedef std::shared_ptr<SynchTreeMessageManager> MsgManaPtr;
@@ -34,6 +35,7 @@ namespace supercloud::test::updateree {
     typedef std::shared_ptr<FakeLocalNetwork> NetPtr;
     typedef std::shared_ptr<FsStorage> FsStoragePtr;
     typedef std::shared_ptr<SynchroDb> SynchPtr;
+    typedef std::shared_ptr<FsExternalInterface> FsInterfacePtr;
 
     InMemoryParameters createNewConfiguration() {
         std::filesystem::path tmp_dir_path{ std::filesystem::temp_directory_path() /= std::tmpnam(nullptr) };
@@ -54,6 +56,11 @@ namespace supercloud::test::updateree {
     ServPtr createPeerFakeNet(InMemoryParameters& params_net, NetPtr& network, const std::string& my_ip, uint16_t listen_port = 0) {
         ((FakeSocketFactory*)ServerSocket::factory.get())->setNextInstanceConfiguration(my_ip, network);
 
+        if (my_ip != "") {
+            params_net.set("PublicIp", my_ip);
+            params_net.setInt("PublicPort", listen_port);
+        }
+
         //launch first peer
         ServPtr net = PhysicalServer::createAndInit(
             std::make_unique<InMemoryParameters>(),
@@ -69,6 +76,11 @@ namespace supercloud::test::updateree {
     ServPtr createPeerFakeNets(InMemoryParameters& params_net, std::vector<NetPtr> networks, const std::string& my_ip, uint16_t listen_port = 0) {
         ((FakeSocketFactory*)ServerSocket::factory.get())->setNextInstanceConfiguration(my_ip, networks);
 
+        if (my_ip != "" && listen_port != 0) {
+            params_net.set("PublicIp", my_ip);
+            params_net.setInt("PublicPort", listen_port);
+        }
+
         //launch first peer
         ServPtr net = PhysicalServer::createAndInit(
             std::make_unique<InMemoryParameters>(),
@@ -76,7 +88,7 @@ namespace supercloud::test::updateree {
         if (listen_port > 100) {
             net->listen(listen_port);
         }
-        //net->launchUpdater();
+        net->launchUpdater();
 
         return net;
     }
@@ -110,7 +122,7 @@ namespace supercloud::test::updateree {
         MyClock(ServPtr serv) : m_serv(serv) {}
         virtual DateTime getCurrrentTime() { return m_serv->getCurrentTime(); }
     };
-    std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr> addFileSystem(ServPtr serv) {
+    std::tuple < FsStoragePtr, SynchPtr, MsgManaPtr, FsInterfacePtr > addFileSystem(ServPtr serv) {
         std::shared_ptr<MyClock> clock = std::make_shared<MyClock>(serv);
         FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), clock } };
         //create synch
@@ -119,7 +131,8 @@ namespace supercloud::test::updateree {
         synch->launch(); //create & register message manager
         //create chunk message manager
         MsgManaPtr chunk_mana = SynchTreeMessageManager::create(serv, fs, synch);
-        return std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr>{fs, synch, chunk_mana};
+        FsInterfacePtr fs_int = FsExternalInterface::create(synch);
+        return std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr, FsInterfacePtr>{fs, synch, chunk_mana, fs_int};
     }
 
     // for connecting to an existing cluster
@@ -139,29 +152,32 @@ namespace supercloud::test::updateree {
 
         //create 2 instance, network + fs + chunk manager (and synch object but not active)
         InMemoryParameters param_serv1 = createNewConfiguration();
-        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1");
         addEntryPoint(param_serv1, "192.168.0.2", 4242);
-        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1");
+        auto [fs1, synch1, chunkmana1, fsint1 ] = addFileSystem(serv1);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         InMemoryParameters param_serv2 = createNewConfiguration();
         ServPtr serv2 = createPeerFakeNets(param_serv2, { net_192_168_0, net_192_168_42 }, "0.0.0.2", 4242);
-        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        auto [fs2, synch2, chunkmana2, fsint2] = addFileSystem(serv2);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         InMemoryParameters param_serv3 = createNewConfiguration();
         addEntryPoint(param_serv3, "192.168.42.2", 4242);
-        ServPtr serv3 = createPeerFakeNets(param_serv2, { net_192_168_42, net_192_168_44 }, "0.0.0.3", 4242);
-        auto [fs3, synch3, chunkmana3] = addFileSystem(serv3);
+        ServPtr serv3 = createPeerFakeNets(param_serv3, { net_192_168_42, net_192_168_44 }, "0.0.0.3", 4242);
+        auto [fs3, synch3, chunkmana3, fsint3] = addFileSystem(serv3);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         InMemoryParameters param_serv4 = createNewConfiguration();
         addEntryPoint(param_serv4, "192.168.44.3", 4242);
-        ServPtr serv4 = createPeerFakeNet(param_serv2, net_192_168_44, "192.168.44.4");
-        auto [fs4, synch4, chunkmana4] = addFileSystem(serv4);
+        ServPtr serv4 = createPeerFakeNet(param_serv4, net_192_168_44, "192.168.44.4");
+        auto [fs4, synch4, chunkmana4, fsint4] = addFileSystem(serv4);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         // 1 -> 2 <- 3 <- 4
+
+        // network creator create the root, so evryone began with it
+        ((FsStorageInMemory*)fs2.get())->createNewRoot();
 
         // connect both computer
         std::shared_ptr<WaitConnection> waiter1 = WaitConnection::create(serv1);
@@ -189,8 +205,8 @@ namespace supercloud::test::updateree {
         REQUIRE(serv2->getPeer()->isConnected());
         REQUIRE(serv3->getPeer()->isConnected());
         REQUIRE(serv4->getPeer()->isConnected());
-        REQUIRE(serv1->getPeersCopy().size() == 2);
-        REQUIRE(serv2->getPeersCopy().size() == 1);
+        REQUIRE(serv1->getPeersCopy().size() == 1);
+        REQUIRE(serv2->getPeersCopy().size() == 2);
         REQUIRE(serv3->getPeersCopy().size() == 2);
         REQUIRE(serv4->getPeersCopy().size() == 1);
 
@@ -210,20 +226,55 @@ namespace supercloud::test::updateree {
             serv4->update();
         }
 
+        REQUIRE(fs2->hasLocally(fs1->getRoot()));
+        REQUIRE(!fs1->hasLocally(fs1->getRoot()));
+        REQUIRE(!fs3->hasLocally(fs1->getRoot()));
+        REQUIRE(!fs4->hasLocally(fs1->getRoot()));
+
+
+        //get the root in serv1
+        FsDirPtr fs1_root;
+        { // using the external interface for the synchronization to occur
+            std::filesystem::path path_request{ "/" };
+            path_request.make_preferred();
+            auto future = fsint1->get(path_request);
+            future.wait();
+            REQUIRE(future.valid());
+            auto fut_res = future.get();
+            REQUIRE(fut_res.error_code == 0);
+            REQUIRE(!fut_res.is_file);
+            fs1_root = FsElt::toDirectory(fut_res.object);
+            REQUIRE(fs1_root.get() != nullptr);
+            REQUIRE(fs1->hasLocally(fs1->getRoot()));
+        }
+
         //now create  dirs & files in the serv1
-        FsDirPtr fs1_root = ((FsStorageInMemory*)fs1.get())->createNewRoot();
-        FsDirPtr fs1_dir1 = fs1->createNewDirectory(fs1->loadDirectory(fs1->getRoot()), "dir1", std::vector<FsID>{}, CUGA_7777);
+        FsDirPtr fs1_dir1;
+        { // using the external interface for the synchronization to occur
+            int res = fsint1->createDirectory(fs1->loadDirectory(fs1->getRoot()), "dir1", CUGA_7777);
+            REQUIRE(res == 0);
+            std::filesystem::path path_request{ "/dir1" };
+            path_request.make_preferred();
+            auto future = fsint1->get(path_request);
+            future.wait();
+            REQUIRE(future.valid());
+            auto fut_res = future.get();
+            REQUIRE(!fut_res.is_file);
+            REQUIRE(fut_res.error_code == 0);
+            fs1_dir1 = FsElt::toDirectory(fut_res.object);
+        }
+        //using the fs method for the rest, as it's easier.
         FsDirPtr fs1_dir11 = fs1->createNewDirectory(fs1_dir1, "dir11", std::vector<FsID>{}, CUGA_7777);
         FsDirPtr fs1_dir111 = fs1->createNewDirectory(fs1_dir11, "dir111", std::vector<FsID>{}, CUGA_7777);
         FsFilePtr fs1_fic2 = fs1->createNewFile(fs1->loadDirectory(fs1->getRoot()), "fic2", {}, CUGA_7777);
         addChunkToFile(fs1, fs1_fic2, ("fic2"));
         REQUIRE(fs1_fic2->getCurrent().size() == 1);
         FsFilePtr fs1_fic12 = fs1->createNewFile(fs1_dir1, "fic12", {}, CUGA_7777);
-        addChunkToFile(fs1, fs1_fic12, ("fic12"));
+        addChunkToFile(fs1, fs1_fic12, ("datafic12"));
         FsFilePtr fs1_fic112 = fs1->createNewFile(fs1_dir11, "fic112", {}, CUGA_7777);
-        addChunkToFile(fs1, fs1_fic112, ("fic112"));
+        addChunkToFile(fs1, fs1_fic112, ("datafic112"));
         FsFilePtr fs1_fic1112 = fs1->createNewFile(fs1_dir111, "fic1112", {}, CUGA_7777);
-        addChunkToFile(fs1, fs1_fic1112, ("fic1112"));
+        addChunkToFile(fs1, fs1_fic1112, ("datafic1112"));
 
         REQUIRE(fs1->hasLocally(fs1_fic2->getCurrent().front()));
         REQUIRE(!fs2->hasLocally(fs1_fic2->getCurrent().front()));
@@ -231,24 +282,30 @@ namespace supercloud::test::updateree {
         REQUIRE(!fs4->hasLocally(fs1_fic2->getCurrent().front()));
 
         std::shared_ptr<FsExternalInterface> fse1 = FsExternalInterface::create(synch1);
-        auto fic112_future = fse1->get(std::filesystem::path{ "/dir1/di11/fic112" }.make_preferred());
+        std::future<FsExternalInterface::ObjectRequestAnswer> fic112_future = fse1->get(std::filesystem::path{ "/dir1/dir11/fic112" }.make_preferred());
         std::future_status ok = fic112_future.wait_for(std::chrono::seconds(1));
         REQUIRE(std::future_status::ready == ok);
-        REQUIRE(fic112_future.get().object);
-        REQUIRE(fic112_future.get().is_file);
-        REQUIRE(fic112_future.get().object->getId() == fs1_fic112->getId());
-        REQUIRE(fic112_future.get().object->getCurrent() == fs1_fic112->getCurrent());
+        FsExternalInterface::ObjectRequestAnswer answer = fic112_future.get();
+        REQUIRE(answer.object);
+        REQUIRE(answer.is_file);
+        REQUIRE(answer.object->getId() == fs1_fic112->getId());
+        REQUIRE(answer.object->getCurrent() == fs1_fic112->getCurrent());
+        synch1->test_emit_invalidation_quick();
 
 
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // the invalidation is transmitted after the future answer
         REQUIRE(!synch1->isInvalidated(3));
         REQUIRE(!synch2->isInvalidated(3));
+        REQUIRE(!synch1->get_test_wait_current_invalidation().empty());
 
         //the net updater is manual in this test.
         //so i will send an update sequence, and this first one should allow serv1 to emit an invalidate to serv2 for the root.
+        log("--- update to send the invalidation");
         serv1->update();
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         // now serv2 should have the root as "invalidated"
+        REQUIRE(synch1->get_test_wait_current_invalidation().empty());
         REQUIRE(!synch1->isInvalidated(3));
         REQUIRE(synch2->isInvalidated(3));
 
@@ -274,5 +331,36 @@ namespace supercloud::test::updateree {
         REQUIRE(synch2->isInvalidated(3));
         REQUIRE(synch3->isInvalidated(3));
         REQUIRE(synch4->isInvalidated(3));
+
+        REQUIRE(!fs4->hasLocally(fs4->getRoot()));
+
+        // get filesystem in serv4
+        FsFilePtr fs12_serv4;
+        { // using the external interface for the synchronization to occur
+            std::filesystem::path path_request{ "/dir1/fic12" };
+            path_request.make_preferred();
+            auto future = fsint4->get(path_request);
+            future.wait();
+            REQUIRE(future.valid());
+            auto fut_res = future.get();
+            REQUIRE(fut_res.error_code == 0);
+            REQUIRE(fut_res.is_file);
+            fs12_serv4 = FsElt::toFile(fut_res.object);
+            REQUIRE(fs12_serv4.get() != nullptr);
+        }
+        // get file data
+        { // using the external interface for the synchronization to occur
+            std::filesystem::path path_request{ "/dir1/fic12" };
+            path_request.make_preferred();
+            ByteBuff data_buffer{ fs12_serv4->size() };
+            auto future = fsint4->getData(fs12_serv4, data_buffer.raw_array(), 0, fs12_serv4->size());
+            future.wait();
+            REQUIRE(future.valid());
+            auto fut_res = future.get();
+            REQUIRE(fut_res.error_code == 0);
+            REQUIRE(toString(std::move(data_buffer)) == "datafic12");
+        }
+
+
     }
 }

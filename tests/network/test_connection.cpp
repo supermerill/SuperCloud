@@ -41,6 +41,14 @@ namespace supercloud::test::network_connection {
 		params_net.setString("ClusterPassphrase", cluster_passphrase);
 		params_net.setString("SecretKeyType", encrypt_type);
 		params_net.setString("PubKeyType", encrypt_type=="AES"?"RSA": encrypt_type);
+		//load pub/priv key
+		if (std::filesystem::exists(name + "_keys.ini")) {
+			ConfigFileParameters saved_pub_priv_key{ name + "_keys.ini" };
+			saved_pub_priv_key.load();
+			params_net.set("PrivKey", saved_pub_priv_key.get("PrivKey"));
+			params_net.set("PubKey", saved_pub_priv_key.get("PubKey"));
+			params_net.set("PubKeyType", saved_pub_priv_key.get("PubKeyType"));
+		}
 
 		// for connecting to an existing cluster
 		if ((my_ip != last_listen_ip || last_listen_port != listen_port) && (last_listen_ip != "")){
@@ -53,6 +61,15 @@ namespace supercloud::test::network_connection {
 		ServPtr net = PhysicalServer::createAndInit(
 			std::make_unique<InMemoryParameters>(),
 			std::shared_ptr<ConfigFileParameters>(new ConfigFileParameters(params_net)));
+		//save pub/priv
+		if (!std::filesystem::exists(name + "_keys.ini")) {
+			ConfigFileParameters save_pu_priv_key{ "name_keys.ini" };
+			save_pu_priv_key.set("PubKeyType", (net->getIdentityManager().getPublicKeyType() == IdentityManager::EncryptionType::RSA ? "RSA" :
+				net->getIdentityManager().getPublicKeyType() == IdentityManager::EncryptionType::NO_ENCRYPTION ? "NONE" : "NAIVE"));
+			save_pu_priv_key.set("PubKey", to_hex(net->getIdentityManager().getPublicKey()));
+			save_pu_priv_key.set("PrivKey", to_hex(net->getIdentityManager().getPrivateKey()));
+			save_pu_priv_key.save();
+		}
 		if (listen_port > 100) {
 			net->listen(listen_port);
 			last_listen_port = listen_port;

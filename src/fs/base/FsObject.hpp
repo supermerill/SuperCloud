@@ -107,11 +107,15 @@ namespace supercloud {
 		/// </summary>
 		/// <returns></returns>
 		virtual uint16_t getDepth() const = 0;
+
 		/// <summary>
 		/// size in bytes for a file.
+		/// theses are only for file, but crrently it's easier to also do the same thing for all objects.
+		/// can be relmoved from here with many more work.
 		/// </summary>
 		/// <returns></returns>
 		virtual size_t size() const { return m_current_state.size(); }
+		virtual std::vector<size_t> sizes() const { return m_current_state; /*easy placeholder for dirs.*/ }
 
 		//TODO: rework that method, maybe put it only in directory?
 		virtual std::tuple<FsID, DateTime> getLastModification() const { return {}; } //FIXME

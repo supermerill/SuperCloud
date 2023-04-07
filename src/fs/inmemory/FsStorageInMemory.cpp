@@ -112,11 +112,11 @@ namespace supercloud {
         std::vector<FsID> old_chunks = file->getCurrent();
         //create the updating request
         std::vector<FsID> new_file_content;
+        std::vector<size_t> new_file_size;
         FsObjectCommit commit;
         commit.date = m_clock->getCurrrentTime();
         size_t min_size = std::min(new_chunks.size(), old_chunks.size());
         size_t idx = 0;
-        size_t file_size = 0;
         for (; idx < min_size; idx++) {
             if (new_chunks[idx].chunk_id != 0) {
                 assert(new_chunks[idx].raw_data == nullptr && new_chunks[idx].raw_data_size == 0);
@@ -124,7 +124,7 @@ namespace supercloud {
                     commit.changes.push_back({ old_chunks[idx], new_chunks[idx].chunk_id });
                 }
                 new_file_content.push_back(new_chunks[idx].chunk_id);
-                file_size += new_chunks[idx].chunk_size;
+                new_file_size.push_back(new_chunks[idx].chunk_size);
             } else {
                 assert(new_chunks[idx].raw_data != nullptr && new_chunks[idx].raw_data_size > 0);
                 FsID new_id = getNextId(FsType::CHUNK);
@@ -135,7 +135,7 @@ namespace supercloud {
                 m_database[new_id] = new_chunk;
                 commit.changes.push_back({ old_chunks[idx], new_id });
                 new_file_content.push_back(new_id);
-                file_size += new_chunk->size();
+                new_file_size.push_back(new_chunk->size());
             }
         }
         for (; idx < old_chunks.size(); idx++) {
@@ -146,7 +146,7 @@ namespace supercloud {
                 assert(new_chunks[idx].raw_data == nullptr && new_chunks[idx].raw_data_size == 0);
                 commit.changes.push_back({ 0, new_chunks[idx].chunk_id });
                 new_file_content.push_back(new_chunks[idx].chunk_id);
-                file_size += new_chunks[idx].chunk_size;
+                new_file_size.push_back(new_chunks[idx].chunk_size);
             } else {
                 assert(new_chunks[idx].raw_data != nullptr && new_chunks[idx].raw_data_size > 0);
                 FsID new_id = getNextId(FsType::CHUNK);
@@ -157,11 +157,11 @@ namespace supercloud {
                 m_database[new_id] = new_chunk;
                 commit.changes.push_back({ 0, new_id });
                 new_file_content.push_back(new_id);
-                file_size += new_chunk->size();
+                new_file_size.push_back(new_chunk->size());
             }
         }
         if (commit.id == 0) { commit.id = getNextId(FsType::NONE); }
-        static_cast<FsFileInMemory*>(file.get())->replaceContent(new_file_content, commit, file_size);
+        static_cast<FsFileInMemory*>(file.get())->replaceContent(new_file_content, new_file_size, commit);
         assert(static_cast<FsFileInMemory*>(file.get())->m_loaded_parent);
         static_cast<FsFileInMemory*>(file.get())->m_loaded_parent->notifyModificationChained(commit.id, commit.date);
     }
@@ -464,7 +464,7 @@ myfile.close();
                     for (const FsID& id : new_commit.getCurrent()) {
                         create_commit.changes.push_back({ 0,id });
                     }
-                    new_file->replaceContent(new_commit.getCurrent(), create_commit, new_commit.size());
+                    new_file->replaceContent(new_commit.getCurrent(), new_commit.sizes(), create_commit);
                 }
                 m_database[new_file->getId()] = new_file;
                 new_file->set_loaded_parent(std::dynamic_pointer_cast<FsDirectoryInMemory>(parent));
@@ -583,7 +583,7 @@ myfile.close();
                     }
 
                     //add commit
-                    static_cast<FsFileInMemory*>(good_obj.get())->replaceContent(new_commit.getCurrent(), modif_commit, new_commit.size());
+                    static_cast<FsFileInMemory*>(good_obj.get())->replaceContent(new_commit.getCurrent(), new_commit.sizes(), modif_commit);
                 }
                 return good_obj->getDeletedDate() < good_obj->getDate();
             }

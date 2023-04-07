@@ -4,14 +4,21 @@
 #include "FsChunk.hpp"
 #include "FsDirectory.hpp"
 
+#include <numeric>
+
 namespace supercloud {
 
     // TODO: currently, the file size is stored as a "cached value of the size of all current chunks".
     //          Is it interresting to store the size of each current chunk?
 	class FsFile : public FsObject {
 	protected:
+        // in bytes
+        // same number of elt than m_current_state
+        std::vector<size_t> m_current_size;
+        // should be the sum of the m_current_size
+        size_t m_size;
 
-        void replaceChunk(FsID old_chunk_id, FsID new_chunk_id, DateTime time) {
+        void replaceChunk(FsID old_chunk_id, FsID new_chunk_id, size_t new_size, DateTime time) {
             bool found = false;
             {
                 //std::lock_guard lock{ m_modify_load_mutex };
@@ -22,13 +29,11 @@ namespace supercloud {
                     this->m_commits.back().id = new_chunk_id;
                     this->m_commits.back().date = time;
                     *it = new_chunk_id;
+                    this->m_current_size[it - this->m_current_state.begin()] = new_size;
                     this->m_commits.back().changes.push_back({ old_chunk_id, new_chunk_id });
                 }
             }
         }
-
-        // in bytes, cache, but useful one
-        size_t m_size;
 	public:
         FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent) :FsObject(id, date, name, puga, parent) { assert(FsElt::isFile(id)); }
         FsFile(FsID id, DateTime date, std::string name, CUGA puga, FsID parent, FsID renamed_from) :FsObject(id, date, name, puga, parent, renamed_from) { assert(FsElt::isFile(id)); }
@@ -41,7 +46,15 @@ namespace supercloud {
 			return { m_commits.back().id, m_commits.back().date };
 		}
 
-        virtual size_t size() const override { return m_size; }
+        virtual size_t size() const override {
+            assert(m_size == std::accumulate(m_current_size.begin(), m_current_size.end(), size_t(0)));
+            return m_size;
+        }
+
+        virtual std::vector<size_t> sizes() const override {
+            assert(m_current_size.size() == m_current_state.size());
+            return m_current_size;
+        }
 //
 //		/**
 //		 * Create a new chunk. It will not be added to the file content right now.

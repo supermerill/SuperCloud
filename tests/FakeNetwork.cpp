@@ -136,9 +136,11 @@ namespace supercloud {
 
     void FakeSocket::ask_for_connect(FakeSocket* other_side) {
         //create the new socket server-side.
-        std::shared_ptr<FakeSocket> new_socket = std::shared_ptr<FakeSocket>{ new FakeSocket{EndPoint{m_listen_from.address(), next_port.fetch_add(1)}, m_connect_to, m_server } };
+        std::shared_ptr<FakeSocket> new_socket = std::shared_ptr<FakeSocket>{ new FakeSocket{EndPoint{m_listen_from.address(), next_port.fetch_add(1)}, other_side->m_listen_from, m_server } };
         //set new port on both (see above and below)
         other_side->m_listen_from = EndPoint{ other_side->m_listen_from.address(), next_port.fetch_add(1) };
+        new_socket->m_connect_to = other_side->m_listen_from;
+        other_side->m_connect_to = new_socket->m_listen_from;
         //create connection
         new_socket->m_other_side = other_side;
         other_side->m_other_side = new_socket.get();

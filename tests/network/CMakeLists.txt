@@ -1,5 +1,10 @@
 get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 
+configure_file(../serv1_keys.ini serv1_keys.ini COPYONLY)
+configure_file(../serv2_keys.ini serv2_keys.ini COPYONLY)
+configure_file(../serv3_keys.ini serv3_keys.ini COPYONLY)
+configure_file(../serv4_keys.ini serv4_keys.ini COPYONLY)
+
 add_executable(${_TEST_NAME}_tests
     test_connection.cpp
     test_connection_fake_network.cpp

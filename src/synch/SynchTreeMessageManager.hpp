@@ -8,6 +8,7 @@
 
 #include <map>
 #include <unordered_set>
+#include <numeric>
 
 namespace supercloud {
 
@@ -28,6 +29,7 @@ namespace supercloud {
 		};
 		struct TreeAnswerEltChange : TreeAnswerElt {
 			std::vector<FsID> state;
+			std::vector<size_t> sizes;
 			bool operator==(const TreeAnswerEltChange& other) const {
 				return TreeAnswerElt::operator==(other) && state == other.state;
 			}
@@ -41,15 +43,24 @@ namespace supercloud {
 		//a fake object, to have all information about the last state of the object (with id & date of the last commit, but no data inside)
 		class FsObjectTreeAnswer : public FsObject {
 			uint16_t m_depth;
+			std::vector<size_t> m_sizes;
 			size_t m_size;
 		public:
-			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state) :
+			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state, std::vector<size_t> sizes) :
 				FsObject(id, date, name, puga, parent), m_depth(depth), m_size(size) {
 				m_current_state = state;
+				m_sizes = sizes;
+				m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
+				assert(FsElt::isDirectory(id) || size == m_size);
+				assert(m_sizes.size() == m_current_state.size());
 			}
-			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, std::vector<FsID> state) :
+			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, std::vector<FsID> state, std::vector<size_t> sizes) :
 				FsObject(id, 0, "", 0, 0), m_depth(depth), m_size(size) {
 				m_current_state = state;
+				m_sizes = sizes;
+				m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
+				assert(FsElt::isDirectory(id) || size == m_size);
+				assert(m_sizes.size() == m_current_state.size());
 			}
 			FsObjectTreeAnswer& setCommit(FsID id_commit, DateTime date) {
 				m_commits.emplace_back();
@@ -66,23 +77,32 @@ namespace supercloud {
 			FsObjectTreeAnswer(const FsObjectTreeAnswer& o) // can copy
 				:FsObject(o.m_id, o.m_creation_date, o.m_name, o.m_puga, o.m_parent), m_depth(o.m_depth) {
 				m_current_state = std::move(o.m_current_state);
+				m_sizes = std::move(o.m_sizes);
 			}
 			FsObjectTreeAnswer(FsObjectTreeAnswer&& o) // can move
 				:FsObject(o.m_id, o.m_creation_date, o.m_name, o.m_puga, o.m_parent), m_depth(o.m_depth) {
 				m_current_state = std::move(o.m_current_state);
+				m_sizes = std::move(o.m_sizes);
 			}
 			uint16_t getDepth() const override {
 				return m_depth;
 			}
 			size_t size() const override {
+				assert(FsElt::isDirectory(m_id) || std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0)) == m_size);
 				return m_size;
+			}
+			std::vector<size_t> sizes() const override {
+				assert(FsElt::isDirectory(m_id) || std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0)) == m_size);
+				assert(m_sizes.size() == m_current_state.size());
+				return m_sizes;
 			}
 			bool operator==(const FsObjectTreeAnswer& other) const {
 				return m_depth == other.m_depth && m_size == other.m_size && m_id == other.m_id
 					&& m_creation_date == other.m_creation_date && m_puga == other.m_puga && m_name == other.m_name
 					&& m_group_id == other.m_group_id && m_parent == other.m_parent && m_current_state == other.m_current_state
 					&& m_commits == other.m_commits && m_date_deleted == other.m_date_deleted && m_renamed_to == other.m_renamed_to
-					&& m_renamed_from == other.m_renamed_from;
+					&& m_renamed_from == other.m_renamed_from
+					&& m_sizes == other.m_sizes;
 			}
 		};
 
