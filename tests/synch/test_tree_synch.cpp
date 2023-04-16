@@ -1,5 +1,5 @@
 
-//#define CATCH_CONFIG_DISABLE
+#define CATCH_CONFIG_DISABLE
 
 #include <catch2/catch.hpp>
 #include "utils/ByteBuff.hpp"
@@ -23,7 +23,6 @@
 #include "synch/SynchroDb.hpp"
 
 namespace supercloud::test::synchtree {
-    typedef std::shared_ptr<SynchTreeMessageManager> MsgManaPtr;
 
     FsID newid() {
         return FsElt::createId(rand_u16() % 1 == 0 ? FsType::FILE : FsType::DIRECTORY, rand_u63(), ComputerId(rand_u63() & COMPUTER_ID_MASK));
@@ -34,6 +33,7 @@ namespace supercloud::test::synchtree {
     typedef std::shared_ptr<FakeLocalNetwork> NetPtr;
     typedef std::shared_ptr<FsStorage> FsStoragePtr;
     typedef std::shared_ptr<SynchroDb> SynchPtr;
+    typedef std::shared_ptr<SynchTreeMessageManager> TreeManaPtr;
 
     InMemoryParameters createNewConfiguration() {
         std::filesystem::path tmp_dir_path{ std::filesystem::temp_directory_path() /= std::tmpnam(nullptr) };
@@ -104,22 +104,13 @@ namespace supercloud::test::synchtree {
         return buffer.flip();
     }
 
-    class MyClock : public Clock {
-        ServPtr m_serv;
-    public:
-        MyClock(ServPtr serv) : m_serv(serv) {}
-        virtual DateTime getCurrrentTime() { return m_serv->getCurrentTime(); }
-    };
-    std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr> addFileSystem(ServPtr serv) {
-        std::shared_ptr<MyClock> clock = std::make_shared<MyClock>(serv);
-        FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), clock } };
+    std::tuple< FsStoragePtr, SynchPtr, TreeManaPtr> addFileSystem(ServPtr serv) {
+        FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), serv } };
         //create synch
         SynchPtr synch = SynchroDb::create();
         synch->init(fs, serv);
         //synch->launch(); //create message manager
-        //create chunk message manager
-        MsgManaPtr chunk_mana = SynchTreeMessageManager::create(serv, fs, synch);
-        return std::tuple< FsStoragePtr, SynchPtr, MsgManaPtr>{fs, synch, chunk_mana};
+        return std::tuple< FsStoragePtr, SynchPtr, TreeManaPtr>{fs, synch, synch->test_treeManager()};
     }
 
     // for connecting to an existing cluster
@@ -132,10 +123,10 @@ namespace supercloud::test::synchtree {
 
         std::shared_ptr<PhysicalServer> serv = PhysicalServer::createForTests();
         ServerConnectionState m_state;
-        MsgManaPtr messageManager = SynchTreeMessageManager::create(serv, {}, {});
+        TreeManaPtr messageManager = SynchTreeMessageManager::create(serv, {}, {});
 
         GIVEN("GET_TREE") {
-            SynchTreeMessageManager::TreeRequest data_1{ {newid(),newid(),newid()}, rand_u63()+1, rand_u63() + 1, get_current_time_milis() };
+            SynchTreeMessageManager::TreeRequest data_1{ newid(), {newid(),newid(),newid()}, rand_u63()+1, rand_u63() + 1, serv->getCurrentTime() };
             ByteBuff buff_1 = messageManager->writeTreeRequestMessage(data_1);
             SynchTreeMessageManager::TreeRequest data_2 = messageManager->readTreeRequestMessage(buff_1);
             ByteBuff buff_2 = messageManager->writeTreeRequestMessage(data_2);
@@ -170,13 +161,13 @@ namespace supercloud::test::synchtree {
             FsID renamed_to; //can be 0 if just deleted
         };
             */
-            SynchTreeMessageManager::TreeAnswer data_1{ ComputerId(rand_u63() & COMPUTER_ID_MASK), get_current_time_milis(), {}, {}, {} };
+            SynchTreeMessageManager::TreeAnswer data_1{ rand_u63(), ComputerId(rand_u63() & COMPUTER_ID_MASK), serv->getCurrentTime(), {}, {}, {} };
             for (uint16_t i = 0; i < uint16_t(100); i++) {
                 if (rand_u8() % 4 == 1) {
                     //(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state)
                     size_t new_size = rand_u63();
                     data_1.created.push_back(SynchTreeMessageManager::FsObjectTreeAnswerPtr{ new SynchTreeMessageManager::FsObjectTreeAnswer{
-                        newid(), rand_u16(), new_size, get_current_time_milis(), "test", rand_u16(), newid(), uint32_t(rand_u63()), std::vector<FsID>{ newid(), newid() }, std::vector<FsID>{ new_size-1, 1 }} });
+                        newid(), rand_u16(), new_size, serv->getCurrentTime(), "test", rand_u16(), newid(), uint32_t(rand_u63()), std::vector<FsID>{ newid(), newid() }, std::vector<FsID>{ new_size-1, 1 }} });
                     if (rand_u8() % 2 == 1) {
                         data_1.created.back()->setCommit(rand_u63(), rand_u63());
                     }
@@ -191,7 +182,7 @@ namespace supercloud::test::synchtree {
             std::vector<FsID> state;*/
                     size_t new_size = rand_u63();
                     data_1.modified.push_back(SynchTreeMessageManager::TreeAnswerEltChange{ 
-                        newid(), rand_u16(), new_size, rand_u63(), get_current_time_milis(), std::vector<FsID>{ newid() ,newid() ,newid() ,newid() }, std::vector<FsID>{ new_size-3,1,1,1 } });
+                        newid(), rand_u16(), new_size, rand_u63(), serv->getCurrentTime(), std::vector<FsID>{ newid() ,newid() ,newid() ,newid() }, std::vector<FsID>{ new_size-3,1,1,1 } });
                 }
                 if (rand_u8() % 4 == 3) {
                     /*
@@ -202,7 +193,7 @@ namespace supercloud::test::synchtree {
             DateTime last_commit_time;
             FsID renamed_to;*/
                     data_1.deleted.push_back(SynchTreeMessageManager::TreeAnswerEltDeleted{ 
-                        newid(), rand_u16(), rand_u63(), rand_u63(), get_current_time_milis(), newid() });
+                        newid(), rand_u16(), rand_u63(), rand_u63(), serv->getCurrentTime(), newid() });
                 }
             }
             ByteBuff buff_1 = messageManager->writeTreeAnswerMessage(data_1);
@@ -234,13 +225,13 @@ namespace supercloud::test::synchtree {
         //create 2 instance, network + fs + chunk manager (and synch object but not active)
         InMemoryParameters param_serv1 = createNewConfiguration();
         ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
-        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        auto [fs1, synch1, treesynch1] = addFileSystem(serv1);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         InMemoryParameters param_serv2 = createNewConfiguration();
         addEntryPoint(param_serv2, "192.168.0.1", 4242);
         ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
-        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        auto [fs2, synch2, treesynch2] = addFileSystem(serv2);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         //init fs
@@ -288,7 +279,7 @@ namespace supercloud::test::synchtree {
         REQUIRE(fs2->hasLocally(fs2_fic2->getCurrent().front()));
 
         //now connected, test a simple tree fetch
-        auto future_tree_answer = chunkmana1->fetchTree(fs1->getRoot());
+        auto future_tree_answer = treesynch1->fetchTree(fs1->getRoot());
         std::future_status status = future_tree_answer.wait_for(std::chrono::milliseconds(10000));
         REQUIRE(status == std::future_status::ready);
         REQUIRE(future_tree_answer.valid());
@@ -317,13 +308,13 @@ namespace supercloud::test::synchtree {
         //create 2 instance, network + fs + chunk manager (and synch object but not active)
         InMemoryParameters param_serv1 = createNewConfiguration();
         ServPtr serv1 = createPeerFakeNet(param_serv1, net_192_168_0, "192.168.0.1", 4242);
-        auto [fs1, synch1, chunkmana1] = addFileSystem(serv1);
+        auto [fs1, synch1, treesynch1] = addFileSystem(serv1);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         InMemoryParameters param_serv2 = createNewConfiguration();
         addEntryPoint(param_serv2, "192.168.0.1", 4242);
         ServPtr serv2 = createPeerFakeNet(param_serv2, net_192_168_0, "192.168.0.2");
-        auto [fs2, synch2, chunkmana2] = addFileSystem(serv2);
+        auto [fs2, synch2, treesynch2] = addFileSystem(serv2);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         //init fs
@@ -356,7 +347,7 @@ namespace supercloud::test::synchtree {
         REQUIRE(fs2->hasLocally(fs2_dir1->getId()));
 
         //now connected, test a simple tree fetch
-        auto future_tree_answer = chunkmana1->fetchTree(fs1->getRoot());
+        auto future_tree_answer = treesynch1->fetchTree(fs1->getRoot());
         std::future_status status = future_tree_answer.wait_for(std::chrono::milliseconds(10000));
         REQUIRE(status == std::future_status::ready);
         REQUIRE(future_tree_answer.valid());
@@ -385,7 +376,7 @@ namespace supercloud::test::synchtree {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         //now connected, test a sub-tree fetch
-        future_tree_answer = chunkmana1->fetchTree(fs2_dir1->getId());
+        future_tree_answer = treesynch1->fetchTree(fs2_dir1->getId());
         status = future_tree_answer.wait_for(std::chrono::milliseconds(10000));
         REQUIRE(status == std::future_status::ready);
         REQUIRE(future_tree_answer.valid());

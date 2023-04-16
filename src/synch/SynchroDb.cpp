@@ -20,9 +20,12 @@ namespace supercloud {
 
 
     void SynchroDb::launch() {
+        assert(!m_synch_tree);
+        assert(!m_synch_chunk);
         m_synch_tree = SynchTreeMessageManager::create(m_network, m_file_storage, ptr());
         m_synch_chunk = ExchangeChunkMessageManager::create(m_network, m_file_storage, ptr());
         m_network->registerListener(*UnnencryptedMessageType::TIMER_SECOND, this->ptr());
+        m_network->registerListener(*UnnencryptedMessageType::TIMER_MINUTE, this->ptr());
     }
 
     void SynchroDb::receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) {
@@ -31,24 +34,126 @@ namespace supercloud {
             //get current DateTime
             DateTime current_time = message.rewind().getLong();
             //assert(std::abs(current_time - m_network->getCurrentTime()) < 100); // less than 100ms of latency (should even be less than a milisecond...)
-            //update
+            //update : emit invalidation message
             this->update(current_time);
+        } else if (message_id == *UnnencryptedMessageType::TIMER_MINUTE) {
+            //get current DateTime
+            DateTime current_time = message.rewind().getLong();
+            // remove old invalidation. they should already have been updated.
+            {std::lock_guard lock{ m_invalidated_mutex };
+                DateTime current_time = m_network->getCurrentTime();
+                std::vector<uint64_t> old_request;
+                for (auto& id2_inv : m_invalidated) {
+                    if (id2_inv.second.since + 2 * 60 * 1000 < current_time) {
+                        old_request.push_back(id2_inv.first);
+                    }
+                }
+                for (uint64_t id : old_request) {
+                    m_invalidated.erase(id);
+                }
+            }
+
+            // push modification made by me to my neighbors if they don't fetch it already.
+            this->push_modifications(current_time);
+
+            //TODO: fetch for cid that have modifications. 
+            
         }
+    }
+
+    void SynchroDb::push_modifications(DateTime current) {
+        std::map<PeerPtr, SynchTreeMessageManager::TreeRequest> to_send;
+        {
+            std::lock_guard lock{ m_current_states_mutex };
+            PeerList peers_neighbors;
+
+            // ---- update neighbors ----
+            PeerList peers_to_check = m_network->getPeersCopy();
+            foreach(it_peer, peers_to_check) {
+                Peer& peer = *it_peer->get();
+                if (!peer.isConnected() || !peer.isAlive()) {
+                    it_peer.erase();
+                }
+            }
+            // remove is_neighbor flag for disconnected peers
+            for (auto& it : m_current_states) {
+                if (it.second.is_neighbor) {
+                    bool found = false;
+                    foreach(it_peer, peers_to_check) {
+                        Peer& peer = *it_peer->get();
+                        if (it.second.cid == peer.getComputerId()) {
+                            found = true;
+                            peers_neighbors.push_back(*it_peer);
+                            it_peer.erase();
+                        }
+                    }
+                    it.second.is_neighbor = found;
+                }
+            }
+            // set is_neighbor flag for connected peers
+            foreach(it_peer, peers_to_check) {
+                Peer& peer = *it_peer->get();
+                if (auto it = m_current_states.find(peer.getComputerId()); it != m_current_states.end()) {
+                    it->second.is_neighbor = true;
+                } else {
+                    // create new synch state
+                    SynchState& new_state = m_current_states[peer.getComputerId()];
+                    new_state.cid = peer.getComputerId();
+                    new_state.is_neighbor = true;
+                }
+                peers_neighbors.push_back(*it_peer);
+            }
+            // ---- END update neighbors ----
+
+
+            // ---- emit push to neighbors ----
+            DateTime current_time = m_network->getCurrentTime();
+            for (PeerPtr& peer : peers_neighbors) {
+                assert(m_current_states.find(peer->getComputerId()) != m_current_states.end());
+                SynchState& state = m_current_states[peer->getComputerId()];
+                assert(state.is_neighbor);
+                if (!state.unpushed_elts.empty()) {
+                    //create request
+                    SynchTreeMessageManager::TreeRequest &fake_request = to_send[peer];
+                    fake_request.depth = -1;
+                    // date for limitting the nodes in the push: use the first date of unpushed things, (or last_fetch_date if more recent and first_unpushed_date is strangely old)
+                    fake_request.last_fetch_time = state.first_unpushed_date - 100;
+                    if (fake_request.last_fetch_time < current_time - 600000 && state.last_fetch_date > state.first_unpushed_date) {
+                        fake_request.last_fetch_time = state.last_fetch_date;
+                    }
+                    fake_request.roots.insert(fake_request.roots.begin(), state.unpushed_elts.begin(), state.unpushed_elts.end());
+                    //update synch (note that it should be cleared by 'answerTreeRequest' anyway)
+                    state.unpushed_elts.clear();
+                }
+            }
+        }//end of lock
+
+        //emit message out of lock, for safety (only do what's strictly necessary inside a lock).
+        for (auto& peer_2_request : to_send) {
+            //create & send message
+            peer_2_request.first->writeMessage(*SynchMessagetype::SEND_TREE,
+                m_synch_tree->writeTreeAnswerMessage(
+                    m_synch_tree->answerTreeRequest(peer_2_request.first, peer_2_request.second)));
+        }
+
     }
 
     void SynchroDb::update(DateTime current) {
         // emit an invalidated message each 5 seconds for object that i have modified.
         std::unordered_map<FsID, Invalidation> copy_invalidated;
         {std::lock_guard lock{ m_newly_invalidated_by_mutex };
-        if (!m_newly_invalidated_2_modifier_notifier.empty()
-            && m_last_invalidation_sent < current
+        if (!m_newly_invalidated.empty()
+            && m_invalidation_wait_since_to_send < current) {
+            copy_invalidated = m_newly_invalidated;
+            m_newly_invalidated.clear();
             // only send an invalidation message each 5 seconds.
-            && current - m_last_invalidation_sent > 5000) {
-            copy_invalidated = m_newly_invalidated_2_modifier_notifier;
-            m_newly_invalidated_2_modifier_notifier.clear();
-            m_last_invalidation_sent = current; // not useful, but safer.
+            m_invalidation_wait_since_to_send = current + 5000;
         }}
+        if (test_trigger) {
+            std::cout << "ok";
+        }
         if (!copy_invalidated.empty()) {
+            m_invalidation_last_sent = current;
             // even if it should be harmless, it's safer to do 'complex' things outside of the mutex.
             m_synch_tree->emitModificationsNotification(copy_invalidated);
         }
@@ -70,33 +175,48 @@ namespace supercloud {
         } else {
             //create one for him
             auto& state = m_current_states[modifier];
-            state.id = modifier;
+            state.cid = modifier;
             state.last_modification_date = last_modif_time;
         }}
         // populate m_invalidated_2_modifier_notifier
         std::vector<FsID> inval_by_toadd;
-        Invalidation invalidation{ modifier, sender };
+        Invalidation invalidation{ modifier, sender, m_network->getCurrentTime(), last_modif_time};
         {std::lock_guard lock{ m_invalidated_mutex };
         for (FsID id : invadidated) {
-            if (auto& it = m_invalidated_2_modifier_notifier.find(id); it != m_invalidated_2_modifier_notifier.end()) {
+            if (auto& it = m_invalidated.find(id); it != m_invalidated.end()) {
                 //i already know. I'll change the from, for good measure.
                 it->second = invalidation;
             } else {
-                m_invalidated_2_modifier_notifier[id] = invalidation;
+                m_invalidated[id] = invalidation;
                 inval_by_toadd.push_back(id); //notifier, to be sure we don't emit to him again.
             }
         }}
         //also populate m_newly_invalidated_2_modifier_notifier if the entry is new for us.
         {std::lock_guard lock{ m_newly_invalidated_by_mutex };
         for (FsID id : inval_by_toadd) {
-            m_newly_invalidated_2_modifier_notifier[id] = invalidation;
+            m_newly_invalidated[id] = invalidation;
         }}
     }
 
+    void SynchroDb::removeInvalidatedElements(const std::vector<FsID>& not_invadidated_anymore) {
+        std::lock_guard lock{ m_invalidated_mutex };
+        for (const FsID& id : not_invadidated_anymore) {
+            m_invalidated.erase(id);
+        }
+    }
+
+    bool SynchroDb::hasInvalidation() {
+        return !m_invalidated.empty();
+    }
     ComputerId SynchroDb::isInvalidated(FsID to_test) {
         std::lock_guard lock{ m_invalidated_mutex };
-        auto it = m_invalidated_2_modifier_notifier.find(to_test);
-        return it == m_invalidated_2_modifier_notifier.end() ? 0 : it->second.modifier;
+        auto it = m_invalidated.find(to_test);
+        return it == m_invalidated.end() ? 0 : it->second.modifier;
+    }
+    ComputerId SynchroDb::notifierInvalidation(FsID to_test) {
+        std::lock_guard lock{ m_invalidated_mutex };
+        auto it = m_invalidated.find(to_test);
+        return it == m_invalidated.end() ? 0 : it->second.notifier;
     }
 
 
@@ -106,7 +226,7 @@ namespace supercloud {
         } else {
             assert(cid != 0);
             SynchState& my_state = m_current_states[cid];
-            my_state.id = cid;
+            my_state.cid = cid;
             my_state.last_fetch_date = m_network->getCurrentTime();
         }
     }
@@ -127,30 +247,34 @@ namespace supercloud {
         }
     }
 
-    void SynchroDb::retreiveChunks(FsFilePtr file, size_t min_size, std::function<void(bool)> callback_caller) {
+    void SynchroDb::retreiveChunks(FsFilePtr file, std::vector<FsID> chunks_id_to_retreive, std::function<void(const std::vector<FsChunkPtr>&)> callback_caller) {
         if (file) {
-            std::shared_ptr<std::pair<std::mutex, std::unordered_set<FsID>>> missing_chunks = std::make_shared< std::pair<std::mutex, std::unordered_set<FsID>>>();
+            std::shared_ptr<std::pair<std::recursive_mutex, std::unordered_set<FsID>>> missing_chunks = std::make_shared< std::pair<std::recursive_mutex, std::unordered_set<FsID>>>();
+            std::shared_ptr<std::vector<FsChunkPtr>> needed_chunks = std::make_shared<std::vector<FsChunkPtr>>();
             {std::lock_guard lock{ m_file_storage_mutex };
-            for (const FsID& chunk_id : file->getCurrent()) {
+            for (const FsID& chunk_id : chunks_id_to_retreive) {
                 if (!m_file_storage->hasLocally(chunk_id)) {
                     missing_chunks->second.insert(chunk_id);
+                } else {
+                    needed_chunks->push_back(m_file_storage->loadChunk(chunk_id));
                 }
             }}
             if (!file->getCurrent().empty()) {
-                auto callback_wait_all = [missing_chunks, callback_caller](ExchangeChunkMessageManager::FsChunkTempPtr answer) {
+                auto callback_wait_all = [missing_chunks, needed_chunks, callback_caller](ExchangeChunkMessageManager::FsChunkTempPtr answer) {
                     if (answer) {
                         bool is_empty;
                         {std::lock_guard lock{ missing_chunks->first };
                         assert(!missing_chunks->second.empty());
+                        needed_chunks->push_back(answer);
                         missing_chunks->second.erase(answer->getId());
                         is_empty = missing_chunks->second.empty();
                         }
                         if (is_empty) {
-                            callback_caller(true);
+                            callback_caller(*needed_chunks);
                         }
                     } else {
                         assert(false);
-                        callback_caller(false);
+                        callback_caller({});
                     }
                 };
 
@@ -160,24 +284,44 @@ namespace supercloud {
                 }}
             }
         }else{
-            callback_caller(false);
+            callback_caller({});
         }
     }
 
     void SynchroDb::notifyObjectChanged(FsID id) {
         //group them and only send them after some seconds.
-        std::lock_guard lock{ m_newly_invalidated_by_mutex };
-        if (m_newly_invalidated_2_modifier_notifier.empty()) {
-            // ask to wait at least a second before emitting it? (often, many changes are packed toguether)
-            m_last_invalidation_sent = m_network->getCurrentTime();
+        {std::lock_guard lock{ m_newly_invalidated_by_mutex };
+            if (m_newly_invalidated.empty()) {
+                // ask to wait at least a second before emitting it? (often, many changes are packed toguether)
+                m_invalidation_wait_since_to_send = std::max(m_network->getCurrentTime() + 1000, m_invalidation_last_sent + 5000);
+            }
+            if (m_invalidated_by_me.modifier == 0 || m_invalidated_by_me.modifier == NO_COMPUTER_ID) {
+                m_invalidated_by_me = { m_network->getComputerId(),m_network->getComputerId() };
+            }
+            m_newly_invalidated[id] = m_invalidated_by_me;
         }
-        if (m_invalidated_by_me.modifier == 0 || m_invalidated_by_me.modifier == NO_COMPUTER_ID) {
-            m_invalidated_by_me = { m_network->getComputerId(),m_network->getComputerId() };
+        {
+            std::lock_guard lock{ m_current_states_mutex };
+            for (auto& it : m_current_states) {
+                if (it.second.unpushed_elts.empty()) {
+                    it.second.first_unpushed_date = m_network->getCurrentTime();
+                }
+                if (it.second.is_neighbor) {
+                    it.second.unpushed_elts.insert(id);
+                }
+            }
         }
-        m_newly_invalidated_2_modifier_notifier[id] = m_invalidated_by_me;
     }
 
-    bool SynchroDb::mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db) {
+    bool SynchroDb::mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db, ComputerId modifier) {
+        //update the invalidation map
+        {std::lock_guard lock_invalidation{ m_invalidated_mutex };
+            if (auto it = m_invalidated.find(to_merge.getId()); it != m_invalidated.end()) {
+                if (it->second.notifier == from || it->second.modifier == from || it->second.modifier == modifier) {
+                    m_invalidated.erase(to_merge.getId());
+                }
+            }
+        }
         std::lock_guard lock{ m_file_storage_mutex };
         /// When we fetch data, we receive FsElt with only the last commits that should be useful for us. (it shouldn't send data much older than what we have).
         /// The object only have the most basic implementation (ids of commits with ids of content, with dates).
@@ -186,9 +330,9 @@ namespace supercloud {
         ///  can be destroyed at will to avoid clutter. The important thing is that a commit id is unique and the state of the FsElt for his commit is the same evrywhere.
         SynchState no_source;
         SynchState& my_state = from == 0 ? no_source : m_current_states[from];
-        if (!my_state.id) {
+        if (!my_state.cid) {
             //create it
-            my_state.id = to_merge.getOwner();
+            my_state.cid = to_merge.getOwner();
         }
         FsID last_id = my_state.last_commit;
         assert(my_state.last_commit_date >= 0);
@@ -272,7 +416,7 @@ namespace supercloud {
             DateTime commit_date = buffer.getLong();
             DateTime received_date = buffer.getLong();
             DateTime fetch_date = buffer.getLong();
-            m_current_states[elt] = { elt, commit, commit_date, received_date, fetch_date };
+            m_current_states[elt] = { elt, false, commit, commit_date, received_date, fetch_date, 0, {} };
         }
 
     }

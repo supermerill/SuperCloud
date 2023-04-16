@@ -45,7 +45,7 @@ namespace supercloud {
      * @author centai
      *
      */
-    class PhysicalServer : public ClusterManager, public std::enable_shared_from_this<PhysicalServer>{
+    class PhysicalServer : public ClusterManager, public std::enable_shared_from_this<PhysicalServer> {
     protected:
 
         ServerConnectionState m_state;
@@ -76,6 +76,7 @@ namespace supercloud {
         int64_t m_last_minute_update = 0;
 
         //TODO: use the network ping message to synch it.
+        ClockPtr my_clock;
         DateTime m_network_time_offset = 0;
 
         /**
@@ -103,7 +104,8 @@ namespace supercloud {
         }
 
         //TODO: use the network ping message to synch it.
-        virtual DateTime getCurrentTime() override { return m_network_time_offset + get_current_time_milis(); }
+        virtual DateTime getCurrentTime() override { return m_network_time_offset + my_clock->getCurrentTime(); }
+        void changeClock(ClockPtr new_clock) { my_clock = new_clock; }
 
         /// <summary>
         /// launch a thread that update() each seconds.
@@ -139,7 +141,7 @@ namespace supercloud {
         /// Check it, as it can be empty if the peer isn't connected.
         /// Can return closed/unconnected peers.
         /// </summary>
-        PeerPtr getPeerPtr(PeerId senderId) const;
+        PeerPtr getPeerPtr(PeerId senderId) const override;
         // same, prefer use your peer object if any
         ComputerId getComputerId(PeerId senderId) const override;
         // same, prefer use your peer object if any
@@ -184,9 +186,12 @@ namespace supercloud {
         /// Register a listener to a message id to react to peers.
         /// When answering a message, please not lock the thread for too long (no sleep / read or other blocking method, use async or pop a thread).
         /// </summary>
-        void registerListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener);
+        void registerListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener) override;
 
-        void unregisterListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener);
+        void unregisterListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener) override;
+#ifdef _DEBUG
+        std::vector< std::shared_ptr<AbstractMessageManager>> test_getListener(uint8_t message_id) override;
+#endif
 
         /// <summary>
         /// Propgate a message to listners.

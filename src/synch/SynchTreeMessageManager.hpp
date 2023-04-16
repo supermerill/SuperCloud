@@ -107,17 +107,21 @@ namespace supercloud {
 		};
 
 		struct TreeRequest {
+			// used to identify the request
+			uint64_t request_id = 0;
 			//what we want as information (the FsID we don't know about)
 			std::vector<FsID> roots;
 			//how many information
 			size_t depth = uint16_t(-1); // 0=only these one, 1 = also their childs, etc... uint16_t(-1) (ie the max as it's unsigned) for evrything, but i guess 16k depth is enough
 			//last commit we have for this element (if it's the same you have, then you can return a null answer)
-			FsID last_commit_received = 0; // note: currently not used to crate the answer TODO: do something with it or erase?
-			// last time we fetched you (please give all information that you received/modified since that moment)
+			FsID last_commit_received = 0; // note: currently not used to create the answer TODO: do something with it or erase?
+			// last time we fetched you (please give all information that you received/modified since that moment). You can set it to 0 to force resend.
 			DateTime last_fetch_time = 0;
 		};
 		typedef std::shared_ptr<FsObjectTreeAnswer> FsObjectTreeAnswerPtr;
 		struct TreeAnswer {
+			uint64_t request_id;
+			// the computer that answer the request
 			ComputerId from;
 			// time of the fetch
 			DateTime answer_time = 0;
@@ -130,6 +134,9 @@ namespace supercloud {
 			// 1 we need the delete date & commit id
 			// if a directory is deleted, all the content is also deleted (using the same commit id is okay-ish, but it should be marked as "unknown deletion id")
 			std::vector<TreeAnswerEltDeleted> deleted;
+			// when somethign requested doesn't have any changes
+			std::vector<FsID> unchanged;
+			//other requested id not here are unreachable.
 		};
 
 		typedef std::shared_ptr<TreeAnswer> TreeAnswerPtr;
@@ -147,10 +154,11 @@ namespace supercloud {
 
 		std::shared_ptr<FsStorage> m_filesystem;
 		std::shared_ptr<SynchroDb> m_syncro;
-		std::shared_ptr<ClusterManager> m_cluster_manager;
+		std::shared_ptr<ClusterManager> m_network; //PhysicalServer becasue i need getPeerPtr
 
 		struct TreeAnswerRequest {
-			ComputerId id;
+			ComputerId request_to;
+			uint64_t request_id; // the id of the request sent by the requester, to help him to find it back.
 			std::vector<FsID> roots; // what we want
 			//std::vector<FsID> unavailable; // what we can't have (shouldn't happen)
 			// we only ask that at reachable peers
@@ -160,19 +168,21 @@ namespace supercloud {
 			DateTime start = 0;
 			DateTime finished_since = 0;
 		};
+		std::atomic<uint64_t> m_request_id_generator;
 		std::recursive_mutex m_mutex_incomplete_requests;
-		std::unordered_map<ComputerId, TreeAnswerRequest> m_incomplete_requests;
+		std::unordered_map<uint64_t, TreeAnswerRequest> m_incomplete_requests;
+		static const inline DateTime MAX_MILISECONDS_FOR_MSG_ABANDON = 3000;
 
 		void register_listener();
 
-		void fillTreeAnswer(TreeAnswer& answer, FsID elt_id, size_t depth, DateTime since);
+		void fillTreeAnswer(ComputerId cid_requester, TreeAnswer& answer, FsID elt_id, size_t depth, DateTime since, std::unordered_set<FsID>& already_seen);
 	public:
 		//factory
 		[[nodiscard]] static std::shared_ptr<SynchTreeMessageManager> create(std::shared_ptr<ClusterManager> physical_server, std::shared_ptr<FsStorage> filesystem, std::shared_ptr<SynchroDb> syncro) {
 			std::shared_ptr<SynchTreeMessageManager> pointer = std::shared_ptr<SynchTreeMessageManager>{ new SynchTreeMessageManager(/*TODO*/) };
 			pointer->m_syncro = syncro;
 			pointer->m_filesystem = filesystem;
-			pointer->m_cluster_manager = physical_server;
+			pointer->m_network = physical_server;
 			pointer->register_listener();
 			return pointer;
 		}
@@ -187,12 +197,15 @@ namespace supercloud {
 		//callback avoid the need to fetch the result afterwards if it's not blocking.
 		std::future<TreeAnswerPtr> fetchTree(/*ComputerId cid, */FsID root);
 		void fetchTree(/*ComputerId cid, */FsID root, const std::function<void(TreeAnswerPtr)>& callback);
-		SynchTreeMessageManager::TreeAnswerRequest& SynchTreeMessageManager::registerChunkReachableRequest(ComputerId cid);
+		// it will create the registration, and put the request id inside the 'unregistered_request' object
+		SynchTreeMessageManager::TreeAnswerRequest& SynchTreeMessageManager::registerRequest(TreeRequest& unregistered_request, ComputerId cid);
 
 		// GET/SEND_TREE
 		ByteBuff writeTreeRequestMessage(const TreeRequest& request);
 		TreeRequest readTreeRequestMessage(const ByteBuff& buffer);
-		TreeAnswer answerTreeRequest(const PeerPtr sender, TreeRequest&& request);
+		// retun true if the answer is emmited, false if not.
+		bool checkAndAnswerTreeRequest(const PeerPtr sender, TreeRequest& request);
+		TreeAnswer answerTreeRequest(const PeerPtr sender, TreeRequest& request);
 		ByteBuff writeTreeAnswerMessage(const TreeAnswer& request);
 		TreeAnswer readTreeAnswerMessage(const ByteBuff& buffer);
 		void useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& answer);

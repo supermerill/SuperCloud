@@ -68,10 +68,14 @@ namespace supercloud {
         std::shared_ptr<std::promise<FsChunkTempPtr>> notify_chunk_fetched{ new std::promise<FsChunkTempPtr> {} };
         std::future<FsChunkTempPtr> future = notify_chunk_fetched->get_future();
 
+        FsChunkPtr my_chunk;
+        {std::lock_guard lock{ m_syncro->fsSynchronize() };
+        if (m_filesystem->hasLocally(chunk_id))
+            my_chunk = m_filesystem->loadChunk(chunk_id);
+        }
         //do i have the chunk?
-        if (m_filesystem->hasLocally(chunk_id)) {
+        if (my_chunk) {
             //i have evrything -> give result
-            FsChunkPtr my_chunk = m_filesystem->loadChunk(chunk_id);
             notify_chunk_fetched->set_value(std::shared_ptr<FsChunkTempElt>{ new FsChunkTempElt{ my_chunk } });
         } else {
             answerSingleChunkRequest(this->m_cluster_manager->getIdentityManager().getSelfPeer(), SingleChunkRequest{ chunk_id , true },
@@ -84,9 +88,13 @@ namespace supercloud {
 
     void ExchangeChunkMessageManager::fetchChunk(FsID chunk_id, const std::function<void(FsChunkTempPtr)>& callback) {
         //do i have the chunk?
-        if (m_filesystem->hasLocally(chunk_id)) {
+        FsChunkPtr my_chunk;
+        {std::lock_guard lock{ m_syncro->fsSynchronize() };
+            if(m_filesystem->hasLocally(chunk_id))
+                my_chunk = m_filesystem->loadChunk(chunk_id);
+        }
+        if (my_chunk) {
             //i have evrything -> give result
-            FsChunkPtr my_chunk = m_filesystem->loadChunk(chunk_id);
             callback(FsChunkTempPtr{ new FsChunkTempElt{my_chunk} });
         } else {
             answerSingleChunkRequest(this->m_cluster_manager->getIdentityManager().getSelfPeer(), SingleChunkRequest{ chunk_id , true }, callback);
@@ -110,7 +118,10 @@ namespace supercloud {
     void ExchangeChunkMessageManager::fillChunkAvailabilityAnswer(ChunkAvailabilityAnswer& answer, FsID id, bool only_us) const {
         ComputerId my_cid = m_cluster_manager->getComputerId();
         if (FsElt::isObject(id)) {
-            FsEltPtr elt = m_filesystem->load(id);
+            FsEltPtr elt;
+            {std::lock_guard lock{ m_syncro->fsSynchronize() };
+                elt = m_filesystem->load(id);
+            }
             if (elt) {
                 for (FsID item : FsElt::toObject(elt)->getCurrent()) {
                     fillChunkAvailabilityAnswer(answer, item, only_us);
@@ -136,7 +147,9 @@ namespace supercloud {
             }
             if (!has_chunk) {
                 //check again, to be sure
-                has_chunk = m_filesystem->hasLocally(id);
+                {std::lock_guard lock{ m_syncro->fsSynchronize() };
+                    has_chunk = m_filesystem->hasLocally(id);
+                }
                 //assert(!has_chunk);
                 if (has_chunk) {
                     std::vector<ChunkAvailabilityComputer>& vec = answer.availability[id];
@@ -317,20 +330,24 @@ namespace supercloud {
         std::vector<FsID> notfound;
         if (FsElt::isFile(request.chunk_or_file_id)) {
             //do i have all of them?
-            FsFilePtr file = m_filesystem->loadFile(request.chunk_or_file_id);
-            for (const FsID& id : file->getCurrent()) {
-                if (m_filesystem->hasLocally(id)) {
-                    local.push_back(id);
-                } else {
-                    notfound.push_back(id);
+            {std::lock_guard lock{ m_syncro->fsSynchronize() };
+                FsFilePtr file = m_filesystem->loadFile(request.chunk_or_file_id);
+                for (const FsID& id : file->getCurrent()) {
+                    if (m_filesystem->hasLocally(id)) {
+                        local.push_back(id);
+                    } else {
+                        notfound.push_back(id);
+                    }
                 }
             }
         } else if (FsElt::isChunk(request.chunk_or_file_id)) {
             //do i have it?
-            if (m_filesystem->hasLocally(request.chunk_or_file_id)) {
-                local.push_back(request.chunk_or_file_id);
-            } else {
-                notfound.push_back(request.chunk_or_file_id);
+            {std::lock_guard lock{ m_syncro->fsSynchronize() };
+                if (m_filesystem->hasLocally(request.chunk_or_file_id)) {
+                    local.push_back(request.chunk_or_file_id);
+                } else {
+                    notfound.push_back(request.chunk_or_file_id);
+                }
             }
         }
         if (notfound.empty()) {
@@ -363,13 +380,14 @@ namespace supercloud {
                 answer.chunk_or_file_id_request = request.chunk_or_file_id;
                 //no chunks -> can't find
                 // still, if it's a file, add the chunks we have
+                {std::lock_guard lock{ m_syncro->fsSynchronize() };
                 for (const FsID& id : local) {
                     if (m_filesystem->hasLocally(id)) {
                         ChunkReachablePath& path = answer.paths[id];
                         path.path = { m_cluster_manager->getComputerId() };
                         path.difficulty = 50; //TODO
                     }
-                }
+                }}
                 log(std::to_string(m_cluster_manager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ExchangeChunkMessageManager) answerChunkReachableRequest: send direct file result ");
                 sender->writeMessage(*SynchMessagetype::SEND_CHUNK_REACHABLE, writeChunkReachableAnswer(answer));
             } else {
@@ -530,21 +548,25 @@ namespace supercloud {
     }
 
     void ExchangeChunkMessageManager::answerSingleChunkRequest(
-        PeerPtr& sender,
+        const PeerPtr& sender,
         const SingleChunkRequest& request,
         const std::function<void(FsChunkTempPtr)>& callback)
     {
-        std::lock_guard lock{ m_waiting_requests_mutex };
         assert(FsElt::isChunk(request.chunk_id));
+        bool is_local = false;
+        {std::lock_guard lock{ m_syncro->fsSynchronize() };
+        is_local = m_filesystem->hasLocally(request.chunk_id);
+        }
+        std::lock_guard lock{ m_waiting_requests_mutex };
         //do i have the chunk?
-        if (m_filesystem->hasLocally(request.chunk_id)) {
+        if (is_local) {
             //i have evrything -> give result
-            FsChunkPtr my_chunk = m_filesystem->loadChunk(request.chunk_id);
-            //ByteBuff data;
-            //my_chunk->read(data, 0, my_chunk->size());
-            //FsChunkTempElt stub{ my_chunk->getId(), my_chunk->getDate(), my_chunk->getHash(),
-            //    std::move(data), 0, my_chunk->getHash(), 0, my_chunk->size() };
-            callback(FsChunkTempPtr(new FsChunkTempElt{my_chunk}));
+            FsChunkTempPtr res_val;
+            {std::lock_guard lock{ m_syncro->fsSynchronize() };
+                FsChunkPtr my_chunk = m_filesystem->loadChunk(request.chunk_id);
+                res_val = FsChunkTempPtr(new FsChunkTempElt{ my_chunk });
+            }
+            callback(res_val);
             return;
         } else {
             //get all connected peers

@@ -31,21 +31,21 @@ namespace supercloud{
             sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_ID);
             {std::lock_guard lock{ m_status_mutex };
             status[sender].last_request = ConnectionStep::ID;
-            status[sender].last_update = get_current_time_milis();
+            status[sender].last_update = this->clusterManager->getCurrentTime();
             }
         }
         else if (currentStep == ConnectionStep::ID && (enforce || status[sender].last_request != ConnectionStep::SERVER_LIST)) {
             sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_LIST);
             {std::lock_guard lock{ m_status_mutex };
             status[sender].last_request = ConnectionStep::SERVER_LIST;
-            status[sender].last_update = get_current_time_milis();
+            status[sender].last_update = this->clusterManager->getCurrentTime();
             }
         }
         else if (currentStep == ConnectionStep::SERVER_LIST && (enforce || status[sender].last_request != ConnectionStep::RSA)) {
             sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
             {std::lock_guard lock{ m_status_mutex };
             status[sender].last_request = ConnectionStep::RSA;
-            status[sender].last_update = get_current_time_milis();
+            status[sender].last_update = this->clusterManager->getCurrentTime();
             }
         }
         else if (currentStep == ConnectionStep::RSA && (enforce || status[sender].last_request != ConnectionStep::IDENTITY_VERIFIED)) {
@@ -54,14 +54,14 @@ namespace supercloud{
                 sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                 {std::lock_guard lock{ m_status_mutex };
                 status[sender].last_request = ConnectionStep::RSA;
-                status[sender].last_update = get_current_time_milis();
+                status[sender].last_update = this->clusterManager->getCurrentTime();
                 }
             } else if (result == IdentityManager::Identityresult::BAD) {
                 sender->close();
             } else if (result == IdentityManager::Identityresult::OK) {
                 {std::lock_guard lock{ m_status_mutex };
                 status[sender].last_request = ConnectionStep::IDENTITY_VERIFIED;
-                status[sender].last_update = get_current_time_milis();
+                status[sender].last_update = this->clusterManager->getCurrentTime();
                 }
             }
         }
@@ -69,14 +69,14 @@ namespace supercloud{
             sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_AES_KEY);
             {std::lock_guard lock{ m_status_mutex };
             status[sender].last_request = ConnectionStep::AES;
-            status[sender].last_update = get_current_time_milis();
+            status[sender].last_update = this->clusterManager->getCurrentTime();
             }
         }
         else if (currentStep == ConnectionStep::AES && (enforce || status[sender].last_request != ConnectionStep::CONNECTED)) {
             sender->writeMessage(*UnnencryptedMessageType::GET_CONNECTION_ESTABLISHED);
             {std::lock_guard lock{ m_status_mutex };
             status[sender].last_request = ConnectionStep::CONNECTED;
-            status[sender].last_update = get_current_time_milis();
+            status[sender].last_update = this->clusterManager->getCurrentTime();
             }
         }
     }
@@ -111,7 +111,7 @@ namespace supercloud{
             if (!sender->isConnected()) {
                 ConnectionStatus& step = status[sender];
                 //if it takes too long, ask again
-                int64_t now = get_current_time_milis();
+                int64_t now = this->clusterManager->getCurrentTime();
                 int64_t diff = now - step.last_update;
                 if (diff < 500) {
                     requestCurrentStep(sender, false);
@@ -224,13 +224,13 @@ namespace supercloud{
                 if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                     status[sender].last_request = ConnectionStep::RSA;
-                    status[sender].last_update = get_current_time_milis();
+                    status[sender].last_update = this->clusterManager->getCurrentTime();
                 } else if (result == IdentityManager::Identityresult::BAD) {
                     sender->close();
                 } else if (result == IdentityManager::Identityresult::OK) {
                     if (sender->isAlive()) { setStatus(sender, ConnectionStep::IDENTITY_VERIFIED); }
                     status[sender].last_request = ConnectionStep::IDENTITY_VERIFIED;
-                    status[sender].last_update = get_current_time_milis();
+                    status[sender].last_update = this->clusterManager->getCurrentTime();
                     // answer is sent inside the  'answerIdentity' method, as it has to reuse the decoded message content.
                 }
             }
@@ -245,7 +245,7 @@ namespace supercloud{
                 if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
                     status[sender].last_request = ConnectionStep::RSA;
-                    status[sender].last_update = get_current_time_milis();
+                    status[sender].last_update = this->clusterManager->getCurrentTime();
                 } else if (result == IdentityManager::Identityresult::BAD) {
                     sender->close();
                 } else if (result == IdentityManager::Identityresult::OK) {

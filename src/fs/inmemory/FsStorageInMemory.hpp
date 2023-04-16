@@ -14,11 +14,6 @@ namespace supercloud {
     class FsChunkInMemory;
     struct FsObjectCommit;
 
-    class Clock {
-    public:
-        virtual DateTime getCurrrentTime() = 0;
-    };
-
     class FsSerializableInMemory {
     public:
         //virtual void serialize(ByteBuff& buffer) = 0;

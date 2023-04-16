@@ -13,7 +13,15 @@
 
 namespace supercloud {
 
+    class SystemClock : public Clock {
+    public:
+        DateTime getCurrentTime() override {
+            return this->get_current_time_milis();
+        }
+    };
+
     PhysicalServer::PhysicalServer() {
+        my_clock = std::shared_ptr<Clock>(new SystemClock());
     }
 
     std::shared_ptr<PhysicalServer> PhysicalServer::createAndInit(std::unique_ptr<Parameters>&& identity_parameters, std::shared_ptr<Parameters> install_parameters) {
@@ -103,7 +111,7 @@ namespace supercloud {
         }
 
         //std::this_thread::sleep_for(std::chrono::seconds(5));
-        int64_t now = get_current_time_milis(); // just like java (new Date()).getTime();
+        int64_t now = my_clock->getCurrentTime(); // just like java (new Date()).getTime();
         ByteBuff now_msg = ByteBuff{}.putLong(now).flip();
        
         //clean peer list
@@ -160,6 +168,8 @@ namespace supercloud {
                 this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_SECOND, now_msg);
                 if (now - m_last_minute_update > 1000 * 60 || force_timer_update) {
                     this->propagateMessage(peer, *UnnencryptedMessageType::TIMER_MINUTE, now_msg);
+                } else {
+
                 }
             } else if(peer->isAlive()){
                 //propagate only to connectionmessage
@@ -537,6 +547,7 @@ namespace supercloud {
     void PhysicalServer::registerListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener) {
         std::lock_guard lock{ listeners_mutex };
         std::vector<std::shared_ptr<AbstractMessageManager>>& list = this->listeners[messageId];
+        assert(!contains(list, listener));
         list.push_back(listener);
     }
     void PhysicalServer::unregisterListener(uint8_t messageId, std::shared_ptr<AbstractMessageManager> listener) {
@@ -548,6 +559,11 @@ namespace supercloud {
             }
         }
     }
+#ifdef _DEBUG
+    std::vector< std::shared_ptr<AbstractMessageManager>> PhysicalServer::test_getListener(uint8_t message_id) {
+        return this->listeners[message_id];
+        }
+#endif
 
     void PhysicalServer::propagateMessage(PeerPtr sender, uint8_t messageId, const ByteBuff& message) {
         // propagate message
@@ -663,6 +679,7 @@ namespace supercloud {
     void PhysicalServer::close() {
         log(std::string("Closing server ") + (this->getPeerId() % 100));
         { std::lock_guard lock(this->m_peers_mutex);
+            this->getPeer()->close();
             for (PeerPtr& peer : m_peers) {
                 if(peer)
                     peer->close();

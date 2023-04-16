@@ -149,9 +149,7 @@ namespace supercloud {
 		friend class ComputerIdSetter;
 	protected:
 
-		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state) : m_state(state), myServer(physicalServer), m_address(inetAddress), m_port(port), createdAt(get_current_time_milis()) {
-			std::cout << "create peer\n";
-		}
+		Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state);
 
 	public:
 		const int64_t createdAt;

@@ -155,7 +155,7 @@ namespace supercloud {
 		};
 
 		//the requests, with the async promise.
-		std::mutex m_waiting_requests_mutex;
+		std::recursive_mutex m_waiting_requests_mutex;
 		std::unordered_map<FsID, WaitingSingleChunkRequest> m_waiting_requests;
 
 		//reachable
@@ -246,7 +246,7 @@ namespace supercloud {
 		SingleChunkAnswer createSingleChunkAnswer(const SingleChunkRequest& request, FsChunkTempPtr stub) const;
 		ByteBuff writeSingleChunkAnswer(const SingleChunkAnswer& answer) const;
 		SingleChunkAnswer readSingleChunkAnswer(const ByteBuff& buffer) const;
-		void answerSingleChunkRequest(PeerPtr& sender, const SingleChunkRequest& request, const std::function<void(FsChunkTempPtr)>& callback);
+		void answerSingleChunkRequest(const PeerPtr& sender, const SingleChunkRequest& request, const std::function<void(FsChunkTempPtr)>& callback);
 		void answerSingleChunkRequest(PeerPtr& sender, const SingleChunkRequest& request);
 		void useSingleChunkAnswer(PeerPtr& sender, const SingleChunkAnswer& answer);
 

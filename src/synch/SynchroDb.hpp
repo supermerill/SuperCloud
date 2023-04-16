@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 
 namespace supercloud {
@@ -22,26 +23,61 @@ namespace supercloud {
     class BasicChunkSizer : public ChunkSizer {
     public:
         size_t chooseChunkSize(FsFilePtr file, std::vector<size_t> current_sizes, size_t current_size, size_t new_size, size_t idx_new_chunk) override {
-            if (new_size <= 4096) return new_size; // only one chunk for small files
+            //if (new_size <= 4096) return new_size; // only one chunk for small files
             if (idx_new_chunk == 0) return 4096; // first chunk is small as it's often requested
-            return std::max(new_size / 9, size_t(4096)); // try to have no more than 10 chunks, it's enough for a naive algorithm.
+            // accumulate existing chunks
+            size_t previous_chunks_size = 0;
+            size_t chunk_idx;
+            for (chunk_idx = 0; chunk_idx < current_sizes.size() && chunk_idx < idx_new_chunk; ++chunk_idx) {
+                if (previous_chunks_size + current_sizes[chunk_idx] > new_size) {
+                    assert(false); // error: wrong idx_new_chunk
+                    break;
+                }
+                previous_chunks_size += current_sizes[chunk_idx];
+            }
+            size_t max_size = std::max(new_size / 9, size_t(4096)); // try to have no more than 10 chunks, it's enough for a naive algorithm.
+            if (max_size >= new_size - previous_chunks_size) {
+                // if the next chunk can be large enough
+                return new_size - previous_chunks_size;
+            } else {
+                // if the next chunk isn't large enough
+                if (max_size > new_size - previous_chunks_size - 4096) {
+                    // if the next chunk is almost enough large
+                    if (max_size < 40960) {
+                        // it's small, enlarge it
+                        return new_size - previous_chunks_size;
+                    } else {
+                        // it's big, reduce it
+                        return new_size - previous_chunks_size - 4096;
+                    }
+                } else {
+                    // use the normal size (~10 chunks per file)
+                    return max_size;
+                }
+            }
         }
     };
 
     struct SynchState {
         //this is the synch state for this computer.
-        ComputerId id;
+        ComputerId cid = 0;
+        // true if we have a direct link
+        bool is_neighbor = false;
         // last commit created on the computer
-        FsID last_commit;
+        FsID last_commit = 0;
         // date of the commit (cache to avoid calling the fs)
-        DateTime last_commit_date;
+        DateTime last_commit_date = 0;
         // date of the moment we where notified of it.
-        DateTime last_commit_received_date;
+        DateTime last_commit_received_date = 0;
         // date of last time we ask for a refresh of our knownledge.
-        DateTime last_fetch_date;
+        DateTime last_fetch_date = 0;
         // date of the time where it nofified the world that it does something on the fs.
-        DateTime last_modification_date;
-        operator bool() const { return id != 0; }
+        DateTime last_modification_date = 0;
+        // date of the oldest unpushed elt.
+        DateTime first_unpushed_date = 0;
+        // list of elt that i should push to him if not fetch shortly.
+        std::unordered_set<FsID> unpushed_elts;
+        operator bool() const { return cid != 0 && cid != NO_COMPUTER_ID; }
     };
     struct ComputerState {
         //other informations about this computerid
@@ -80,6 +116,8 @@ namespace supercloud {
     struct Invalidation {
         ComputerId modifier; // the computer that creates the invalidation 
         ComputerId notifier; // the computer that notified us.
+        Date since; // when we were notified of this invalidation.
+        Date time; // when the invalidation was created.
     };
 
     class SynchroDb : public AbstractMessageManager, public std::enable_shared_from_this<SynchroDb> {
@@ -118,15 +156,20 @@ namespace supercloud {
         /// These elements are modified by another peer. Please fetch before using one of these.
         /// note: you don't need to serialize these, as evrythign can be invalidated when we're not connected
         /// </summary>
-        std::unordered_map<FsID, Invalidation> m_invalidated_2_modifier_notifier;
+        std::unordered_map<FsID, Invalidation> m_invalidated;
         std::mutex m_invalidated_mutex;
 
         // ------ notification for invalidation -----
         std::mutex m_newly_invalidated_by_mutex;
-        std::unordered_map<FsID, Invalidation> m_newly_invalidated_2_modifier_notifier;
-        DateTime m_last_invalidation_sent;
+        std::unordered_map<FsID, Invalidation> m_newly_invalidated;
+        DateTime m_invalidation_last_sent;
+        DateTime m_invalidation_wait_since_to_send;
         Invalidation m_invalidated_by_me; // cache for getComputerId()
 
+        // ------ changes that I should send to my peers (before closing, or each minute) ------
+        // they should already be notified that i changed it.
+        std::mutex m_new_stuff_mutex;
+        std::vector<FsID> m_new_stuff_by_me;
 
         // ------ managers -------
 
@@ -148,6 +191,7 @@ namespace supercloud {
 
         SynchroDb() {}
     public:
+        static inline bool test_trigger = false;
         //factory
         [[nodiscard]] static std::shared_ptr<SynchroDb> create() {
             std::shared_ptr<SynchroDb> pointer = std::shared_ptr<SynchroDb>{ new SynchroDb(/*TODO*/) };
@@ -178,6 +222,13 @@ namespace supercloud {
         void update(DateTime current);
 
         /// <summary>
+        /// Update: push fetch answer to neighbor about unfetch changes.
+        /// Peers should be smart enough to fetch changes when i send them invalidation, but just in case somthing went wrong.
+        /// </summary>
+        /// <param name="current"></param>
+        void push_modifications(DateTime current);
+
+        /// <summary>
         /// received a fetch, update our 'last_fetch_date' for this ComputerId
         /// </summary>
         /// <param cid=""></param>
@@ -192,7 +243,8 @@ namespace supercloud {
         /// </summary>
         /// <param name="new_commit"></param>
         /// <param name="commit_time"></param>
-        bool mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db);
+        /// <param name="modifier">The computer that has created this commit/revision</param>
+        bool mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db, ComputerId modifier = NO_COMPUTER_ID);
 
         /// <summary>
         /// Ensure that this element is up to date (for file & dir) and locally accessible (for chunk, but you should use retreiveChunks instead).
@@ -209,14 +261,17 @@ namespace supercloud {
         /// Retreive and store (at least temporary) the all chunk of 'file' to be able to read at least 'min_size' bytes.
         /// </summary>
         /// <param name="file">object file that contains current chunks ids to fetch</param>
-        /// <param name="size_min">Byte count to ensure we have (from 0)</param>
+        /// <param name="size_min">chunks ids to fetch</param>
         /// <param name="calback">callback to call when chunks are available via filesystem call. with false if the fetch wasn't possible.</param>
-        void retreiveChunks(FsFilePtr file, size_t min_size, std::function<void(bool)> calback);
+        void retreiveChunks(FsFilePtr file, std::vector<FsID> chunks_id_to_retreive, std::function<void(const std::vector<FsChunkPtr>&)> calback);
 
         void notifyObjectChanged(FsID id);
 
         void addInvalidatedElements(const std::vector<FsID>& invadidated, ComputerId sender, ComputerId modifier, DateTime last_modif_time);
+        void removeInvalidatedElements(const std::vector<FsID>& not_invadidated_anymore);
+        bool hasInvalidation();
         ComputerId isInvalidated(FsID to_test);
+        ComputerId notifierInvalidation(FsID to_test);
 
         void load(std::filesystem::path& file);
         void save(std::filesystem::path& file);
@@ -241,6 +296,12 @@ namespace supercloud {
             }
             return SynchroDb::NO_SYNC_STATE;
         }
+        void notifyPushElement(ComputerId cid, FsID elt_id) {
+            std::lock_guard lock{ m_current_states_mutex };
+            if (auto cstate = m_current_states.find(cid); cstate != m_current_states.end()) {
+                cstate->second.unpushed_elts.erase(elt_id);
+            }
+        }
         //return a copy, to be sure it's not invalidated by getAvailability (as it can create things) by another thread
         Availability getAvailability(FsID id) {
             std::lock_guard lock{ m_known_availability_mutex };
@@ -264,14 +325,18 @@ namespace supercloud {
             m_known_availability[id].available[cid] = availability;
         }
 
+        std::recursive_mutex& fsSynchronize() { return m_file_storage_mutex; }
+
 #ifdef _DEBUG
         std::unordered_map<FsID, Invalidation> get_test_wait_current_invalidation() {
-            return m_newly_invalidated_2_modifier_notifier;
+            return m_newly_invalidated;
         }
 
         void test_emit_invalidation_quick() {
-            m_last_invalidation_sent = 0;
+            m_invalidation_wait_since_to_send = 0;
         }
+        std::shared_ptr<ExchangeChunkMessageManager> test_chunkManager() { return m_synch_chunk; }
+        std::shared_ptr<SynchTreeMessageManager> test_treeManager() { return m_synch_tree; }
 #endif
     };
 

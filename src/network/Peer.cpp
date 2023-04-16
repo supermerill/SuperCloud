@@ -25,6 +25,12 @@ namespace supercloud {
 		return this->m_socket->remote_endpoint();
 	}
 
+
+	Peer::Peer(PhysicalServer& physicalServer, const std::string& inetAddress, int port, ConnectionState state)
+		: m_state(state), myServer(physicalServer), m_address(inetAddress), m_port(port), createdAt(physicalServer.getCurrentTime()) {
+		log("create peer\n");
+	}
+
 	void Peer::setPeerId(PeerId new_id) {
 		if (myServer.getIdentityManager().getSelfPeer().get() == this) {
 			log(std::to_string(myServer.getPeerId() % 100) + " CHANGE MY PID from " + std::to_string(m_peer_id % 100) + " to " + (new_id%100));
@@ -47,9 +53,9 @@ namespace supercloud {
 		try {
 			bool ok = true;
 			while (ok) {
-				log(std::to_string(myServer.getPeerId() % 100) + "  read next message");
+				//log(std::to_string(myServer.getPeerId() % 100) + "  read next message");
 				ok = readMessage();
-				log(std::to_string(myServer.getPeerId() % 100) + " end reading? "+(ok?"NO, continue":"YES, STOP"));
+				//log(std::to_string(myServer.getPeerId() % 100) + " end reading? "+(ok?"NO, continue":"YES, STOP"));
 			}
 			log(std::to_string(myServer.getPeerId() % 100) + " end reading!");
 		}
@@ -382,7 +388,7 @@ namespace supercloud {
 				message_counter = buff_Xbytes.getSize();
 				message_size = buff_Xbytes.getSize();
 				size_t message_size2 = buff_Xbytes.getSize();
-				log(std::to_string(myServer.getPeerId() % 100) + " read message size :" + message_size + " == " + uint16_t(message_size2) + " with counter " + message_counter);
+				//log(std::to_string(myServer.getPeerId() % 100) + " read message size :" + message_size + " == " + uint16_t(message_size2) + " with counter " + message_counter);
 				if (message_size < 0) {
 					error("Stream error: stream want me to read a negative number of bytes");
 					return true;
@@ -410,7 +416,7 @@ namespace supercloud {
 				error(std::to_string(myServer.getPeerId() % 100) + "<-" + (getPeerId() % 100) + " readMessage ERROR in socket read: " + e.what());
 				throw read_error(e.what());
 			}
-			log(std::to_string(myServer.getPeerId() % 100) + " message read :" + buff_message.position() + " / " + buff_message.limit());
+			//log(std::to_string(myServer.getPeerId() % 100) + " message read :" + buff_message.position() + " / " + buff_message.limit());
 			try{
 				//decode mesage
 				//if (decoder == nullptr) decoder = myServer.getIdentityManager().getSecretCipher(this, Cipher.DECRYPT_MODE);

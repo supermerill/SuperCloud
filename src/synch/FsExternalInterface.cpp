@@ -7,6 +7,7 @@
 #include "fs/base/FsDirectory.hpp"
 
 #include <fstream>
+#include <map>
 
 namespace supercloud {
 
@@ -26,7 +27,7 @@ namespace supercloud {
         return future;
     }
 
-    void FsExternalInterface::get(const std::filesystem::path& path, std::shared_ptr<std::promise<FsExternalInterface::ObjectRequestAnswer>> promise_ptr) {
+    void FsExternalInterface::get(const std::filesystem::path& path, std::shared_ptr<std::promise<FsExternalInterface::ObjectRequestAnswer>> promise_ptr, size_t max_retries) {
         std::lock_guard lock{ m_db->m_file_storage_mutex };
         //check if path is correct
         if (path.empty() || !path.has_root_path()) {
@@ -49,9 +50,13 @@ namespace supercloud {
         size_t next_sep = path_next.find_first_of(path.preferred_separator);
 
         //check if in invalidated id
-        if (m_db->isInvalidated(dir->getId())) {
-            m_db->askForFsSynch(dir->getId(), [path, promise_ptr, this](FsEltPtr result) { this->get(path, promise_ptr); });
+        if (m_db->isInvalidated(dir->getId()) && max_retries > 0) {
+            m_db->askForFsSynch(dir->getId(), [path, promise_ptr, max_retries, this](FsEltPtr result) { 
+                this->get(path, promise_ptr, max_retries-1); 
+                });
             return;
+        }if (m_db->isInvalidated(dir->getId())) {
+            assert(false);
         }
         while (next_sep != std::string::npos) {
             dir_name = path_next.substr(0, next_sep);
@@ -66,7 +71,7 @@ namespace supercloud {
                 }
             }
             if (!found) {
-                assert(false);
+                //assert(false);
                 promise_ptr->set_value(ObjectRequestAnswer{ "not found", 2 });
                 return;
             }
@@ -107,7 +112,7 @@ namespace supercloud {
         return future;
     }
     void FsExternalInterface::get(FsID id, std::shared_ptr<std::promise<FsExternalInterface::ObjectRequestAnswer>> promise_ptr) {
-        if (!m_db->m_invalidated_2_modifier_notifier.empty()) {
+        if (m_db->hasInvalidation()) {
             // maybe we can check for the root to avoid that, but better safe than sorry.
             m_db->askForFsSynch(id, [id, promise_ptr, this](FsEltPtr result) { this->get(id, promise_ptr); });
         } else {
@@ -124,7 +129,7 @@ namespace supercloud {
         return future;
     }
     void FsExternalInterface::contains(FsDirPtr dir, const std::string& name, std::shared_ptr<std::promise<FsExternalInterface::ObjectRequestAnswer>> promise_ptr) {
-        if (!m_db->m_invalidated_2_modifier_notifier.empty()) {
+        if (m_db->hasInvalidation()) {
             // maybe we can check for the root to avoid that, but better safe than sorry.
             m_db->askForFsSynch(dir->getId(), [dir, name, promise_ptr, this](FsEltPtr result) { this->contains(dir, name, promise_ptr); });
         } else {
@@ -212,25 +217,64 @@ namespace supercloud {
         return future;
     }
 
-    void FsExternalInterface::getData(FsFilePtr file, uint8_t* buffer, size_t offset, size_t size, std::shared_ptr<std::promise<FsExternalInterface::RequestAnswer>> promise_ptr) {
+    void FsExternalInterface::getData(FsFilePtr file, uint8_t* buffer, size_t offset, size_t size, std::shared_ptr<std::promise<FsExternalInterface::RequestAnswer>> promise_ptr
+        , size_t max_retries, std::map<FsID, FsChunkPtr> cache) {
         // don't refresh for chunks, use normal refresh for them.
         //if (!m_db->m_invalidated.empty()) {
         //    // maybe we can check for the root to avoid that, but better safe than sorry.
         //    m_db->askForFsSynch(dir->getId(), [dir, name, promise_ptr, this]() { this->contains(dir, name, promise_ptr); });
         //}
-        std::lock_guard lock{ m_db->m_file_storage_mutex };
         size_t file_pos = 0;
         size_t buffer_pos = 0;
         if (file->size() < offset + size) {
             error("warning; reading more bytes than the file possess");
         }
-        for (const FsID& id_chunk : file->getCurrent()) {
-            FsChunkPtr chunk = m_db->m_file_storage->loadChunk(id_chunk);
+        size_t first_chunk_idx = 0;
+        {
+            size_t temp_offset = 0;
+            assert(file->getCurrent().size() == file->sizes().size());
+            for (first_chunk_idx = 0; first_chunk_idx < file->getCurrent().size(); ++first_chunk_idx) {
+                temp_offset += file->sizes()[first_chunk_idx];
+                if (temp_offset > offset) {
+                    break;
+                }
+            }
+        }
+        std::lock_guard lock{ m_db->fsSynchronize() };
+        for (size_t chunk_idx = first_chunk_idx; chunk_idx < file->getCurrent().size(); ++chunk_idx) {
+            const FsID id_chunk = file->getCurrent()[chunk_idx];
+            FsChunkPtr chunk;
+            if (auto it = cache.find(id_chunk); it != cache.end()) {
+                chunk = it->second;
+            } else {
+                chunk = m_db->m_file_storage->loadChunk(id_chunk);
+            }
             if (!chunk) {
+                if (max_retries == 0) {
+                    promise_ptr->set_value(RequestAnswer{ "Error when fetching the data: chunk not available", 5 });
+                    return;
+                }
                 //ask to load all needed chunks
-                m_db->retreiveChunks(file, offset + size, [this, promise_ptr, file, buffer, offset, size](bool success) {
-                    assert(success);
-                    this->getData(file, buffer, offset, size, promise_ptr);
+                const size_t first_unknown_chunk_idx = chunk_idx;
+                std::vector<FsID> current = file->getCurrent();
+                std::vector<FsID> chunks_to_get = { id_chunk };
+                size_t next_file_pos = file_pos;
+                for (size_t next_chunk_idx = chunk_idx + 1; next_chunk_idx < file->getCurrent().size(); ++next_chunk_idx) {
+                    if (next_file_pos < offset + size) {
+                        //we can ask for chunks that are already here, they will just be linked into the "cache"
+                        chunks_to_get.push_back(file->getCurrent()[next_chunk_idx]);
+                        next_file_pos += file->sizes()[next_chunk_idx];
+                    } else {
+                        break;
+                    }
+                }
+                m_db->retreiveChunks(file, chunks_to_get, [this, current, promise_ptr, file, buffer, offset, size, max_retries, cache, first_unknown_chunk_idx, file_pos, buffer_pos]
+                        (const std::vector<FsChunkPtr>& chunks) {
+                    std::map<FsID, FsChunkPtr> cache_copy = cache;
+                    for (FsChunkPtr temp_chunk : chunks) {
+                        cache_copy[temp_chunk->getId()] = temp_chunk;
+                    }
+                    this->getData(file, buffer, offset, size, promise_ptr, max_retries - 1, cache_copy);
                 });
                 return;
             }
@@ -250,15 +294,18 @@ namespace supercloud {
                     assert(file_pos + chunk->size() <= offset + size);
                     promise_ptr->set_value(RequestAnswer{ "",0 });
                     return;
-                }
+                };
             }
             file_pos += chunk->size();
             assert(file_pos > 0);
         }
         //shouldn't be possible, only happening when the file is shorter that the caller think
         promise_ptr->set_value(RequestAnswer{ "File is smaller", 5 });
+        return;
     }
-    void FsExternalInterface::writeData(FsFilePtr file, const uint8_t* buffer, const size_t offset, const size_t size, std::shared_ptr<std::promise<FsExternalInterface::RequestAnswer>> promise_ptr) {
+
+    void FsExternalInterface::writeData(FsFilePtr file, const uint8_t* buffer, const size_t offset, const size_t size, std::shared_ptr<std::promise<FsExternalInterface::RequestAnswer>> promise_ptr
+        , size_t max_retries, std::map<FsID, FsChunkPtr> cache) {
         {std::lock_guard lock{ m_db->m_file_storage_mutex };
         //check if the file still exists
         if (file->getDeletedDate() > 0) {
@@ -266,56 +313,90 @@ namespace supercloud {
             return;
         }
         //check that we have the chunks needed for it
-        const size_t old_file_size = file->size();
-        const size_t new_file_size = std::max(offset + size, old_file_size);
-        std::vector<size_t> chunk_sizes;
+        std::vector<size_t> new_chunk_sizes;
         std::vector<ChunkOrRawData> new_content;
+        FsID first_part_id = 0;
         FsChunkPtr first_part;
         size_t first_part_file_pos = 0;
+        FsID last_part_id = 0;
         FsChunkPtr last_part;
         size_t last_part_file_pos = 0;
         size_t first_chunkidx_after_write = 0;
-        const std::vector<FsID>& current = file->getCurrent();
+        const std::vector<FsID>& old_chunks_id = file->getCurrent();
+        const std::vector<size_t>& old_chunks_size = file->sizes();
+        assert(old_chunks_id.size() == old_chunks_size.size());
+        const size_t old_file_size = file->size();
+        const size_t new_file_size = std::max(offset + size, old_file_size);
         {
             size_t current_file_pos;
-            for (size_t idx = 0; idx < current.size(); ++idx) {
-                FsChunkPtr chunk = m_db->m_file_storage->loadChunk(current[idx]);
-                if (!chunk) {
-                    //ask to load all needed chunks (for their size)
-                    m_db->retreiveChunks(file, offset + size, [this, promise_ptr, file, buffer, offset, size](bool success) {
-                        assert(success); 
-                        this->writeData(file, buffer, offset, size, promise_ptr);
-                        });
-                    return;
-                }
-                if (current_file_pos + chunk->size() <= offset) {
-                    chunk_sizes.push_back(chunk->size());
-                    new_content.push_back(ChunkOrRawData{ chunk->getId(), chunk->size(), nullptr, 0 });
+            for (size_t chunk_idx = 0; chunk_idx < old_chunks_id.size(); ++chunk_idx) {
+                FsID chunk_id = old_chunks_id[chunk_idx];
+                size_t chunk_size = old_chunks_size[chunk_idx];
+                if (current_file_pos + chunk_size <= offset) {
+                    // can reuse (before the change)
+                    new_chunk_sizes.push_back(chunk_size);
+                    new_content.push_back(ChunkOrRawData{ chunk_id, chunk_size, nullptr, 0 });
                 } else if (current_file_pos < offset) {
+                    // has to be split (write start inside it ; and maybe also end inside)
                     first_part_file_pos = current_file_pos;
-                    first_part = chunk;
-                } else if (current_file_pos < offset + size && current_file_pos + chunk->size() > offset + size) {
+                    first_part_id = chunk_id;
+                } else if (current_file_pos < offset + size && current_file_pos + chunk_size > offset + size) {
+                    // has to be split (write end inside it, and does not start inside)
                     last_part_file_pos = current_file_pos;
-                    last_part = chunk;
-                    first_chunkidx_after_write = idx + 1;
-                } else if (current_file_pos + chunk->size() == offset + size) {
-                    //just at the right position: no extra data to reuse
-                    first_chunkidx_after_write = idx + 1;
+                    last_part_id = chunk_id;
+                    first_chunkidx_after_write = chunk_idx + 1;
+                } else if (current_file_pos + chunk_size == offset + size) {
+                    //just at the right position: no extra data to reuse (very lucky)
+                    first_chunkidx_after_write = chunk_idx + 1;
                 }
-                current_file_pos += chunk->size();
+                current_file_pos += chunk_size;
                 if (current_file_pos >= offset + size) {
                     if (first_chunkidx_after_write == 0) {
                         assert(false); //shouldn't be possible
                         if (current_file_pos == offset + size) {
-                            first_chunkidx_after_write = idx + 1;
+                            first_chunkidx_after_write = chunk_idx + 1;
                         } else {
-                            first_chunkidx_after_write = idx;
+                            first_chunkidx_after_write = chunk_idx;
                         }
                     }
                     break;
                 }
             }
         }
+        //get chunk data that is needed
+        if (first_part_id != 0) {
+            if (auto it = cache.find(first_part_id); it != cache.end()) {
+                first_part = it->second;
+            } else {
+                first_part = m_db->m_file_storage->loadChunk(first_part_id);
+            }
+        }
+        if (last_part_id != 0) {
+            if (auto it = cache.find(last_part_id); it != cache.end()) {
+                last_part = it->second;
+            } else {
+                last_part = m_db->m_file_storage->loadChunk(last_part_id);
+            }
+        }
+        if ((first_part_id != 0 && !first_part) || (last_part_id != 0 && !last_part)) {
+            if (max_retries == 0) {
+                promise_ptr->set_value(RequestAnswer{ "Error when fetching the data: chunk not available", 5 });
+                return;
+            }
+            std::vector<FsID> chunks_to_get;
+            if (first_part_id != 0 && !first_part) chunks_to_get.push_back(first_part_id);
+            if (last_part_id != 0 && !last_part) chunks_to_get.push_back(last_part_id);
+            m_db->retreiveChunks(file, chunks_to_get, [this, promise_ptr, file, buffer, offset, size, max_retries, cache](const std::vector<FsChunkPtr>& chunks) {
+                std::map<FsID, FsChunkPtr> cache_copy = cache;
+                for (FsChunkPtr temp_chunk : chunks) {
+                    cache_copy[temp_chunk->getId()] = temp_chunk;
+                }
+                this->writeData(file, buffer, offset, size, promise_ptr, max_retries - 1, cache_copy);
+            });
+            return;
+        }
+
+
         // change chunks
         size_t buffer_pos = 0;
         //size_t file_pos = first_part_file_pos;
@@ -323,7 +404,7 @@ namespace supercloud {
         std::vector<uint8_t> temp_buffer_last; // for first 'new' chunk if it's a mix
         if (first_part) {
             //choose chunk size
-            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, chunk_sizes, first_part_file_pos, new_file_size, chunk_sizes.size());
+            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, new_chunk_sizes, first_part_file_pos, new_file_size, new_chunk_sizes.size());
             if (current_chunk_size < offset - first_part_file_pos) {
                 //min chunk size: at least what there is in the last chunk (for algo simplification)
                 current_chunk_size = offset - first_part_file_pos;
@@ -341,13 +422,13 @@ namespace supercloud {
                 buffer_pos += nb_read_new_buffer;
             }
             //create chunk
-            chunk_sizes.push_back(temp_buffer_first.size());
+            new_chunk_sizes.push_back(temp_buffer_first.size());
             new_content.push_back(ChunkOrRawData{ 0, 0, &temp_buffer_first[0], temp_buffer_first.size() });
         }
         //new chunks
         while (buffer_pos < size) {
             assert(buffer_pos < size);
-            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, chunk_sizes, first_part_file_pos, new_file_size, chunk_sizes.size());
+            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, new_chunk_sizes, first_part_file_pos, new_file_size, new_chunk_sizes.size());
             if (last_part && current_chunk_size + buffer_pos >= size) {
                 //add last part if any
                 //compute size
@@ -369,8 +450,8 @@ namespace supercloud {
         }
         //add all chunks after the changed part
         size_t size_remaining_after_write = new_file_size - (offset + size);
-        for (size_t idx = first_chunkidx_after_write; idx < current.size(); ++idx) {
-            new_content.push_back(ChunkOrRawData{ current[idx], size_remaining_after_write, nullptr, 0 });
+        for (size_t idx = first_chunkidx_after_write; idx < old_chunks_id.size(); ++idx) {
+            new_content.push_back(ChunkOrRawData{ old_chunks_id[idx], old_chunks_size[idx], nullptr, 0 });
             size_remaining_after_write = 0;
         }
 
@@ -383,8 +464,9 @@ namespace supercloud {
         m_db->notifyObjectChanged(file->getId());
     }
 
-    void FsExternalInterface::resize(FsFilePtr file, size_t new_size, std::shared_ptr<std::promise<FsExternalInterface::ObjectRequestAnswer>> promise_ptr) {
-        {std::lock_guard lock{ m_db->m_file_storage_mutex };
+    void FsExternalInterface::resize(FsFilePtr file, size_t new_size, std::shared_ptr<std::promise<FsExternalInterface::ObjectRequestAnswer>> promise_ptr
+        , size_t max_retries, std::map<FsID, FsChunkPtr> cache) {
+        {std::lock_guard lock{ m_db->fsSynchronize() };
         //check if the file still exists
         if (file->getDeletedDate() > 0) {
             promise_ptr->set_value(ObjectRequestAnswer{ "File deleted, can't set data to it anymore", 2 });
@@ -392,70 +474,78 @@ namespace supercloud {
         }
         //check that we have the chunks needed for it
         const size_t old_file_size = file->size();
-        std::vector<size_t> chunk_sizes;
         std::vector<ChunkOrRawData> new_content;
-        FsChunkPtr first_part;
-        size_t first_part_file_pos = 0;
-        const std::vector<FsID>& current = file->getCurrent();
+        FsChunkPtr chunk_to_split;
+        size_t chunk_to_split_idx = 0;
+        size_t chunk_to_split_start_pos = 0;
+        const std::vector<FsID>& old_chunks_id = file->getCurrent();
+        const std::vector<size_t>& old_sizes = file->sizes();
+        std::vector<size_t> new_sizes;
+        //keep okay first chunks
+        size_t file_pos = 0;
         {
-            size_t current_file_pos;
-            for (size_t i_id = 0; i_id < current.size(); ++i_id) {
-                FsChunkPtr chunk = m_db->m_file_storage->loadChunk(current[i_id]);
-                if (!chunk) {
-                    //ask to load all needed chunks (for their size)
-                    m_db->retreiveChunks(file, std::min(old_file_size, new_size), [this, promise_ptr, file, new_size](bool success) {
-                        assert(success);
-                        this->resize(file, new_size, promise_ptr);
-                    });
-                    return;
-                }
-                if (current_file_pos + chunk->size() <= new_size) {
-                    chunk_sizes.push_back(chunk->size());
-                    new_content.push_back(ChunkOrRawData{ chunk->getId(), chunk->size(), nullptr, 0 });
-                } else if (current_file_pos < new_size) {
-                    first_part_file_pos = current_file_pos;
-                    first_part = chunk;
+            for (size_t chunk_idx = 0; chunk_idx < old_chunks_id.size(); chunk_idx++) {
+                if (file_pos + old_sizes[chunk_idx] <= new_size) {
+                    new_content.push_back(ChunkOrRawData{ old_chunks_id[chunk_idx], old_sizes[chunk_idx], nullptr, 0 });
+                    file_pos += old_sizes[chunk_idx];
+                    new_sizes.push_back(old_sizes[chunk_idx]);
+                } else if (file_pos == new_size) {
+                    break;
+                } else if (file_pos < new_size) {
+                    chunk_to_split_start_pos = file_pos;
+                    chunk_to_split_idx = chunk_idx;
+                    if (auto it = cache.find(old_chunks_id[chunk_idx]); it != cache.end()) {
+                        chunk_to_split = it->second;
+                    } else {
+                        chunk_to_split = m_db->m_file_storage->loadChunk(old_chunks_id[chunk_idx]);
+                        if (!chunk_to_split) {
+                            if (max_retries == 0) {
+                                promise_ptr->set_value(ObjectRequestAnswer{ "Error when fetching the data: impossible to retreive a chunk to split", 5 });
+                            }
+                            //ask to load all needed chunks (for their size)
+                            m_db->retreiveChunks(file, { old_chunks_id[chunk_idx] }, [this, promise_ptr, file, new_size, max_retries, cache](const std::vector<FsChunkPtr>& result) {
+                                std::map<FsID, FsChunkPtr> cache_copy = cache;
+                                for (FsChunkPtr temp_chunk : result) {
+                                    cache_copy[temp_chunk->getId()] = temp_chunk;
+                                }
+                                this->resize(file, new_size, promise_ptr, max_retries-1, cache_copy);
+                            });
+                            return;
+                        }
+                    }
+                    break;
                 } else {
                     assert(false);
                 }
-                current_file_pos += chunk->size();
-                if (current_file_pos >= new_size) {
-                    break;
-                }
             }
         }
-        // change chunks
-        size_t file_pos = first_part_file_pos;
-        std::vector<uint8_t> temp_buffer_first; // for first 'new' chunk if it's a mix
-        if (first_part) {
-            //choose chunk size
-            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, chunk_sizes, first_part_file_pos, new_size, chunk_sizes.size());
-            if (current_chunk_size < first_part->size()) {
-                current_chunk_size = first_part->size();
-            }
-            if (current_chunk_size > new_size - first_part_file_pos) {
-                current_chunk_size = new_size - first_part_file_pos;
-            }
-            //have to get the first part of the buffer
-            temp_buffer_first.resize(current_chunk_size);
+        // size reduced: we have to remove some chunks
+        std::vector<uint8_t> chunk_to_split_data; // for first 'new' chunk if it's a mix
+        if (chunk_to_split) {
+            assert(new_size < old_file_size);
+            //choose chunk size of the reduced last chunk
+            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, old_sizes, old_file_size, new_size, chunk_to_split_idx);
+            assert(chunk_to_split_start_pos + current_chunk_size == new_size);
+            //have to get the first part of the buffer (have to copy the buffer instead of just linking to it because we don't have access to it (maybe still on the hard drive)
+            //TODO: allow to reuse the stored array if available (need something to keep immutable data array over different part of the software)
+            chunk_to_split_data.resize(current_chunk_size);
             //add first part
-            size_t nb_read = std::min(first_part->size(), current_chunk_size);
-            first_part->read(&temp_buffer_first[0], 0, nb_read);
-            if (nb_read < current_chunk_size) {
-                //fill the rest with 0 (to avoid memory attacks/leak)
-                std::fill(&temp_buffer_first[nb_read], &temp_buffer_first[current_chunk_size], uint8_t(0));
-            }
+            assert(chunk_to_split->size() > current_chunk_size);
+            chunk_to_split->read(&chunk_to_split_data[0], 0, current_chunk_size);
             //create chunk
-            chunk_sizes.push_back(temp_buffer_first.size());
-            new_content.push_back(ChunkOrRawData{ 0, 0, &temp_buffer_first[0], temp_buffer_first.size() });
+            new_sizes.push_back(current_chunk_size);
+            new_content.push_back(ChunkOrRawData{ 0, 0, &chunk_to_split_data[0], current_chunk_size });
             file_pos += current_chunk_size;
+            assert(file_pos == new_size);
         }
         //new chunks
         std::vector<std::vector<uint8_t>> buffers; // for others chunks
         size_t size_remaining_after_chunks = new_size - old_file_size;
         while (file_pos < new_size) {
-            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, chunk_sizes, first_part_file_pos, new_size, chunk_sizes.size());
+            assert(!chunk_to_split);
+            size_t current_chunk_size = m_db->m_chunk_sizer->chooseChunkSize(file, new_sizes, file_pos, new_size, new_sizes.size());
             if (current_chunk_size + file_pos > new_size) {
+                assert(false);
                 current_chunk_size = new_size - file_pos;
             }
             std::vector<uint8_t>& curr_buff = buffers.emplace_back(current_chunk_size, uint8_t(0));
@@ -466,11 +556,16 @@ namespace supercloud {
 
         //create the commit
         m_db->m_file_storage->modifyFile(file, new_content);
+        // now, all temporary storage can be destroyed.
         assert(file->size() == new_size);
 
-        }//mutex
+        }//fs mutex
         //notify the synch (& maybe peers)
         m_db->notifyObjectChanged(file->getId());
+
+
+        promise_ptr->set_value(ObjectRequestAnswer{ true, file });
+        return;
     }
 
     /// <summary>

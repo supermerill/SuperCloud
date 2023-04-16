@@ -57,6 +57,14 @@ namespace supercloud{
 		return DateTime(date) * 60000;
 	}
 
+	class Clock {
+	protected:
+		DateTime get_current_time_milis();
+	public:
+		virtual DateTime getCurrentTime() = 0;
+	};
+	typedef std::shared_ptr<Clock> ClockPtr;
+
 	template<class NUMERIC>
 	std::string to_hex_str(NUMERIC data)
 	{
@@ -79,7 +87,6 @@ namespace supercloud{
 
 	//inline void  compare(const std::string& fileName, int min, int max);
 
-	DateTime get_current_time_milis();
 
 	std::string messageId_to_string(uint8_t msgType);
 

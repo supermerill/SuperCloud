@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <unordered_map>
+#include <map>
 #include <optional>
 
 namespace supercloud {
@@ -83,14 +84,14 @@ namespace supercloud {
         uint32_t getUserId(ComputerId cid);
 
     protected:
-        void get(const std::filesystem::path& path, std::shared_ptr<std::promise<ObjectRequestAnswer>> promise_ptr);
+        void get(const std::filesystem::path& path, std::shared_ptr<std::promise<ObjectRequestAnswer>> promise_ptr, size_t max_retries = 1);
         void get(FsID id, std::shared_ptr<std::promise<ObjectRequestAnswer>> promise_ptr);
         void contains(FsDirPtr dir, const std::string& name, std::shared_ptr<std::promise<ObjectRequestAnswer>> promise_ptr);
         void getAll(std::vector<std::filesystem::path> paths, std::shared_ptr<std::promise<MultiObjectRequestAnswer>> promise_ptr);
         void getAll(std::vector<FsID> ids, std::shared_ptr<std::promise<MultiObjectRequestAnswer>> promise_ptr);
-        void getData(const FsFilePtr file, uint8_t* buffer, const size_t offset, const size_t size, std::shared_ptr<std::promise<RequestAnswer>> promise_ptr);
-        void writeData(FsFilePtr file, const uint8_t* buffer, const size_t offset, const size_t size, std::shared_ptr<std::promise<RequestAnswer>> promise_ptr);
-        void resize(FsFilePtr file, size_t new_size, std::shared_ptr<std::promise<ObjectRequestAnswer>> promise_ptr);
+        void getData(const FsFilePtr file, uint8_t* buffer, const size_t offset, const size_t size, std::shared_ptr<std::promise<RequestAnswer>> promise_ptr, size_t max_retries = 1, std::map<FsID, FsChunkPtr> cache = {});
+        void writeData(FsFilePtr file, const uint8_t* buffer, const size_t offset, const size_t size, std::shared_ptr<std::promise<RequestAnswer>> promise_ptr, size_t max_retries = 1, std::map<FsID, FsChunkPtr> cache = {});
+        void resize(FsFilePtr file, size_t new_size, std::shared_ptr<std::promise<ObjectRequestAnswer>> promise_ptr, size_t max_retries = 1, std::map<FsID, FsChunkPtr> cache = {});
 
     };
 

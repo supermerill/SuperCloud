@@ -236,7 +236,7 @@ namespace supercloud{
             }
         }
         if (ok) {
-            m_already_tried[peer_data.peer].push_back(TryConnectData{ get_current_time_milis(), to_test_and_launch });
+            m_already_tried[peer_data.peer].push_back(TryConnectData{ this->clusterManager.getCurrentTime(), to_test_and_launch });
             return clusterManager.connect(peer_data.peer, to_test_and_launch.address, to_test_and_launch.port, 1000);
         }
         return {};

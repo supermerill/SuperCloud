@@ -212,7 +212,7 @@ namespace supercloud {
 		virtual void receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) = 0;
 	};
 
-	class ClusterManager {
+	class ClusterManager : public Clock {
 	public:
 		const ServerConnectionState& getState();
 
@@ -220,8 +220,9 @@ namespace supercloud {
 		/// Get the current UTC time, as defined by the network.
 		/// the precision of DateTime is at ms scale, but the network doesn't enforce a datetime synhronization below the second.
 		/// In practice, sub-second synch doesn't matter.
+		/// Now in Clock object
 		/// </summary>
-		virtual DateTime getCurrentTime() = 0;
+		//virtual DateTime getCurrentTime() = 0;
 
 		//used
 		/**
@@ -241,6 +242,9 @@ namespace supercloud {
 		//virtual bool writeMessage(int64_t peerId, uint8_t messageType, const ByteBuff& message) = 0;
 		virtual void registerListener(uint8_t message_id, std::shared_ptr<AbstractMessageManager> listener) = 0;
 		virtual void unregisterListener(uint8_t message_id, std::shared_ptr<AbstractMessageManager> listener) = 0;
+#ifdef _DEBUG
+		virtual std::vector< std::shared_ptr<AbstractMessageManager>> test_getListener(uint8_t message_id) = 0;
+#endif
 		virtual void init(uint16_t listenPort) = 0;
 
 		/**
@@ -248,7 +252,8 @@ namespace supercloud {
 		 * @return number of connected peers at this moment.
 		 */
 		virtual size_t getNbPeers() const = 0;
-		virtual PeerList getPeersCopy() const = 0;
+		virtual PeerPtr getPeerPtr(PeerId peerId) const = 0; // discouraged.
+		virtual PeerList getPeersCopy() const = 0; // discouraged.
 
 		/**
 		 * Try to connect to a new peer at this address/port

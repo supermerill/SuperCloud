@@ -106,11 +106,10 @@ namespace supercloud::test::syncchunk {
 
     class MyClock : public Clock {
     public:
-        virtual DateTime getCurrrentTime() { return get_current_time_milis(); }
+        virtual DateTime getCurrentTime() override { return this->get_current_time_milis(); }
     };
     std::tuple< FsStoragePtr, SynchPtr, ChunkManaPtr> addFileSystem(ServPtr serv) {
-        std::shared_ptr<MyClock> clock = std::make_shared<MyClock>();
-        FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), clock } };
+        FsStoragePtr fs = FsStoragePtr{ new FsStorageInMemory{ serv->getComputerId(), serv } };
         //create synch
         SynchPtr synch = SynchroDb::create();
         synch->init(fs, serv);

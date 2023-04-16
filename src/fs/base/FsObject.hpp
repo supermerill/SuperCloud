@@ -29,6 +29,8 @@ namespace supercloud {
 
 	/// immutable object of a group of things (folder, files or chunks) in the filesystem
 	// interface for a folder or a file.
+	// FIXME: modifiable things can be modified in threads. There is nothing to take care of clients iterating over list and those who write over them.
+	//   => make this completly immutable. IF someone want to write over it, he has to change the object inside the database. Other thread must reload it.
 	class FsObject : public FsElt {
 	protected:
 		//////  -- immutable: name, path, rights -- //////
@@ -59,6 +61,9 @@ namespace supercloud {
 
 		// if I have to load commits, or chunks. To make other threads to wait the one that load has finished.
 		//mutable std::mutex m_modify_load_mutex; // note: maybe use a higher order mutex. ie only one thread can modify/read the local fs?
+		// ptr to the new version of this object (it has been modified by a thread). Can be set only one time and can't be removed (the static mutex takes care of that).
+		FsObjectPtr m_new_version;
+		static inline std::mutex m_new_version_mutex;
 
 
 		void addThing(FsID new_thing_id, DateTime time) {
@@ -121,5 +126,43 @@ namespace supercloud {
 		virtual std::tuple<FsID, DateTime> getLastModification() const { return {}; } //FIXME
 
 		virtual std::vector<FsID> getCurrent() const { return m_current_state; }
+
+		bool isObsolete() { return (bool)m_new_version; }
+		// can only be called if isObsolete(). An fsObject can't loose its isObsolete() tag.
+		FsObjectPtr refresh() {
+			assert(m_new_version);
+			FsObjectPtr refreshed_version = m_new_version;
+			if (!refreshed_version) {
+				return refreshed_version;
+			}
+			while (refreshed_version->m_new_version) {
+				refreshed_version = refreshed_version->m_new_version;
+			}
+			return refreshed_version;
+		}
+		// return the last good version of this object. Note that someone may modify it just right after the return of this call.
+		static inline FsObjectPtr refresh(FsObjectPtr src) {
+			return src->isObsolete() ? src->refresh() : src;
+		}
+		/// <summary>
+		/// Try to 'modify' this object concurently, after checking that this object is not obsolete.
+		/// It only allow other thread to fetch the change as this object is now obsolete.
+		/// You have to also update the repositories where this object lies.
+		/// </summary>
+		/// <param name="new_version">The new version to set.</param>
+		/// <returns>true if the new version is set. False if this object is already obsolete.</returns>
+		bool modify(FsObjectPtr new_version) {
+			bool is_obsolete = isObsolete();
+			if(!is_obsolete){
+				std::lock_guard lock{ m_new_version_mutex };
+				is_obsolete = (bool)m_new_version;
+				if (!is_obsolete) {
+					m_new_version = new_version;
+					return true;
+				}
+			}
+			return false;
+		}
+
 	};
 }

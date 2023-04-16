@@ -70,7 +70,7 @@ namespace supercloud {
     FsDirPtr FsStorageInMemory::createNewRoot() {
         std::lock_guard lock{ this->synchronize() };
         FsID new_id = this->getRoot();
-        DateTime time = (DateTime)m_clock->getCurrrentTime();
+        DateTime time = (DateTime)m_clock->getCurrentTime();
         std::shared_ptr<FsDirectoryInMemory> new_dir = std::shared_ptr<FsDirectoryInMemory>{ new FsDirectoryInMemory {new_id, time, "", CUGA_7777, new_id} };
         m_database[new_dir->getId()] = new_dir;
         new_dir->set_loaded_parent(new_dir);
@@ -83,7 +83,7 @@ namespace supercloud {
         FsID new_id = getNextId(FsType::CHUNK);
         //create new chunk
         std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{
-            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), new_data,
+            new FsChunkInMemory {new_id, m_clock->getCurrentTime(), new_data,
             compute_naive_hash(new_data, new_data_size), new_data_size} };
         m_database[new_chunk->getId()] = new_chunk;
         static_cast<FsFileInMemory*>(file.get())->addChunk(new_chunk);
@@ -96,7 +96,7 @@ namespace supercloud {
         FsID new_id = getNextId(FsType::CHUNK);
         //create new chunk
         std::shared_ptr<FsChunkInMemory> new_chunk = std::shared_ptr<FsChunkInMemory>{ 
-            new FsChunkInMemory {new_id, m_clock->getCurrrentTime(), new_data, 
+            new FsChunkInMemory {new_id, m_clock->getCurrentTime(), new_data, 
             compute_naive_hash(new_data, new_data_size), new_data_size} };
         m_database[new_chunk->getId()] = new_chunk;
         static_cast<FsFileInMemory*>(file.get())->replaceChunk(old_chunk, new_chunk);
@@ -114,7 +114,7 @@ namespace supercloud {
         std::vector<FsID> new_file_content;
         std::vector<size_t> new_file_size;
         FsObjectCommit commit;
-        commit.date = m_clock->getCurrrentTime();
+        commit.date = m_clock->getCurrentTime();
         size_t min_size = std::min(new_chunks.size(), old_chunks.size());
         size_t idx = 0;
         for (; idx < min_size; idx++) {
@@ -171,7 +171,7 @@ namespace supercloud {
         assert(!name.empty());
         std::lock_guard lock{ this->synchronize() };
         FsID new_id = getNextId(FsType::FILE);
-        DateTime time = (DateTime)m_clock->getCurrrentTime();
+        DateTime time = (DateTime)m_clock->getCurrentTime();
         std::shared_ptr<FsFileInMemory> new_file;
         if (from) {
             new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId(), from->getId()} };
@@ -191,7 +191,7 @@ namespace supercloud {
         FsEltPtr directory_elt = load(old_file->getParent());
         if (FsDirPtr directory = FsElt::toDirectory(directory_elt); directory) {
             FsID new_id = getNextId(FsType::FILE);
-            DateTime time = (DateTime)m_clock->getCurrrentTime();
+            DateTime time = (DateTime)m_clock->getCurrentTime();
             std::shared_ptr<FsFileInMemory> new_file = std::shared_ptr<FsFileInMemory>{ new FsFileInMemory {new_id, time, name, rights, directory->getId()} };
             if (!chunks.empty()) {
                 modifyFile(new_file, chunks);
@@ -221,7 +221,7 @@ namespace supercloud {
         assert(directory_parent);
         std::lock_guard lock{ this->synchronize() };
         FsID new_id = getNextId(FsType::DIRECTORY);
-        DateTime time = (DateTime)m_clock->getCurrrentTime();
+        DateTime time = (DateTime)m_clock->getCurrentTime();
         std::shared_ptr<FsDirectoryInMemory> new_dir;
         if (from) {
             assert(directory_parent); // if renamed, it's not the root dir
@@ -261,14 +261,14 @@ namespace supercloud {
         if (FsDirPtr directory = FsElt::toDirectory(directory_elt); directory) {
             assert(directory != old_file);
             FsID new_id = getNextId(FsType::NONE);
-            DateTime time = (DateTime)m_clock->getCurrrentTime();
+            DateTime time = (DateTime)m_clock->getCurrentTime();
             ((FsObjectInMemory*)old_file.get())->remove(time, 0);
             ((FsDirectoryInMemory*)directory.get())->delFile(old_file->getId(), new_id, time);
             ((FsDirectoryInMemory*)directory.get())->notifyModificationChained(new_id, time);
             return;
         }
         assert(false);
-        //deleteObject(old_file, getNextId(FsType::NONE), m_clock->getCurrrentTime());
+        //deleteObject(old_file, getNextId(FsType::NONE), m_clock->getCurrentTime());
     }
 
     void FsStorageInMemory::serialize(const std::filesystem::path& file) {
@@ -501,7 +501,7 @@ myfile.close();
             }
             //now we have our object inside our database (and its childs if directory).
             return true;
-        } else {
+        } else { // this obj is already here.
             //check immutable part (if a creation commit)
             if (new_commit.getParent() != 0) {
                 assert(new_commit.getParent() == good_obj->getParent());
@@ -583,7 +583,11 @@ myfile.close();
                     }
 
                     //add commit
-                    static_cast<FsFileInMemory*>(good_obj.get())->replaceContent(new_commit.getCurrent(), new_commit.sizes(), modif_commit);
+                    if (FsElt::isFile(new_commit.getId())) {
+                        static_cast<FsFileInMemory*>(good_obj.get())->replaceContent(new_commit.getCurrent(), new_commit.sizes(), modif_commit);
+                    } else {
+                        static_cast<FsDirectoryInMemory*>(good_obj.get())->replaceContent(new_commit.getCurrent(), modif_commit);
+                    }
                 }
                 return good_obj->getDeletedDate() < good_obj->getDate();
             }
