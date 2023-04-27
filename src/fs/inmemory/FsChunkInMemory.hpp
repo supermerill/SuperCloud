@@ -53,4 +53,6 @@ namespace supercloud {
 		virtual DateTime getLastAccessDate() { assert(false); return 0; }
 	};
 
+	typedef std::shared_ptr<FsChunkInMemory> FsChunkInMemoryPtr;
+
 }

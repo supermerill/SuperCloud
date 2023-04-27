@@ -394,7 +394,7 @@ namespace supercloud{
         for (const PeerPtr& peer : all_peers) {
             //double-check the entries, there may be temprorary ones from the clusterManager list.
             // only use the ones that are in our db (or us)
-            if (peer->getComputerId() != 0 && peer->getComputerId() != NO_COMPUTER_ID 
+            if (peer->getComputerId() != NO_COMPUTER_ID 
                 && 0 != (peer->getState() & (Peer::ConnectionState::DATABASE | Peer::ConnectionState::US))) {
                 IdentityManager::PeerData data = clusterManager.getIdentityManager().getPeerData(peer);
                 ClusterAdminMessageManager::DataSendServerDatabaseItem& item = ret_list.emplace_back();

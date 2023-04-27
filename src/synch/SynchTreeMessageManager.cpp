@@ -24,7 +24,7 @@ namespace supercloud {
 		m_network->registerListener(*SynchMessagetype::SEND_INVALIDATE_ELT, this->ptr());
 		// abandon request that aren't answered since 1-2 seconds
 		m_network->registerListener(*UnnencryptedMessageType::TIMER_SECOND, this->ptr());
-		// fetch each minute
+		// cleaning
 		m_network->registerListener(*UnnencryptedMessageType::TIMER_MINUTE, this->ptr()); //TODO
 	}
 
@@ -92,9 +92,14 @@ namespace supercloud {
 
 
 	void SynchTreeMessageManager::emitModificationsNotification(std::unordered_map<FsID, Invalidation> modifiedid_2_invalidation) {
-		std::unordered_map<ComputerId,std::vector<FsID>> modifier_2_modified;
+		//create an InvalidateElementsMessage per modifier. not mandatory but it's maybe useful for the 'last_invalidation_time'
+		//if you can remove it, remove this shuffle and only create one InvalidateElementsMessage
+		struct FsIDs_Invalidations { std::vector<FsID> ids; std::vector<FsCommitID> commits; };
+		std::unordered_map<ComputerId, FsIDs_Invalidations> modifier_2_modified;
 		for (const auto& entry : modifiedid_2_invalidation) {
-			modifier_2_modified[entry.second.modifier].push_back(entry.first);
+			FsIDs_Invalidations& id2inva = modifier_2_modified[FsElt::getComputerId(entry.second.commit)];
+			id2inva.ids.push_back(entry.first);
+			id2inva.commits.push_back(entry.second.commit);
 		}
 		DateTime current_time = m_network->getCurrentTime();
 		for (PeerPtr peer : m_network->getPeersCopy()) {
@@ -103,15 +108,16 @@ namespace supercloud {
 			std::vector<InvalidateElementsMessage> msgs;
 			for (const auto& entry : modifier_2_modified) {
 				msgs.emplace_back();
-				msgs.back().modifier = entry.first;
-				msgs.back().modified = entry.second;
+				msgs.back().modified = entry.second.ids;
+				msgs.back().commits = entry.second.commits;
 				msgs.back().last_invalidation_time = current_time;
 				if (SynchState state = m_syncro->getSynchState(entry.first); state) {
 					msgs.back().last_invalidation_time = state.last_modification_date;
 				}
 				foreach(idptr, msgs.back().modified) {
+					assert(entry.first == FsElt::getComputerId(modifiedid_2_invalidation[*idptr].commit));
 					if (modifiedid_2_invalidation[*idptr].notifier == send_to) idptr.erase();
-					else if (modifiedid_2_invalidation[*idptr].modifier == send_to) idptr.erase();
+					else if (entry.first == send_to) idptr.erase();
 				}
 				if (msgs.back().modified.empty()) {
 					msgs.erase(msgs.end() - 1);
@@ -119,6 +125,15 @@ namespace supercloud {
 			}
 			//create buffer
 			ByteBuff buffer = writeInvalidateEltsMessage(msgs);
+#ifdef _DEBUG
+			auto cids = this->m_syncro->getComputerIds();
+			cids.insert(m_network->getComputerId());
+			for (auto& msg : msgs) {
+				for (FsID commit : msg.commits) {
+					assert(cids.find(FsElt::getComputerId(commit)) != cids.end());
+				}
+			}
+#endif
 			//emit to all connected peers
 			peer->writeMessage(*SynchMessagetype::SEND_INVALIDATE_ELT, buffer.rewind());
 		}
@@ -127,11 +142,13 @@ namespace supercloud {
 		ByteBuff buffer;
 		buffer.putSize(answers.size());
 		for (const InvalidateElementsMessage& elt : answers) {
-			buffer.serializeComputerId(elt.modifier);
 			buffer.putLong(elt.last_invalidation_time);
 			buffer.putSize(elt.modified.size());
-			for (FsID id : elt.modified) {
-				buffer.putULong(id);
+			assert(elt.modified.size() == elt.commits.size());
+			for (size_t idx = 0; idx < elt.modified.size(); idx++) {
+				buffer.putULong(elt.modified[idx]);
+				buffer.putULong(elt.commits[idx]);
+				assert(elt.commits[idx] != 0);
 			}
 		}
 		return buffer.flip();
@@ -142,18 +159,21 @@ namespace supercloud {
 		for (size_t i_msg = 0; i_msg < nb_msg; ++i_msg) {
 			msgs.emplace_back();
 			InvalidateElementsMessage& msg = msgs.back();
-			msg.modifier = buffer.deserializeComputerId();
 			msg.last_invalidation_time = buffer.getLong();
 			size_t nb_roots = buffer.getSize();
 			for (size_t i_id = 0; i_id < nb_roots; ++i_id) {
 				msg.modified.push_back(buffer.getULong());
+				msg.commits.push_back(buffer.getULong());
 			}
 		}
 		return msgs;
 
 	}
 	void SynchTreeMessageManager::useInvalidateEltsAnswer(const PeerPtr sender, const InvalidateElementsMessage& answer) {
-		m_syncro->addInvalidatedElements(answer.modified, sender->getComputerId(), answer.modifier, answer.last_invalidation_time);
+		assert(answer.modified.size() == answer.commits.size());
+		if (!answer.commits.empty()) {
+			m_syncro->addInvalidatedElements(answer.modified, answer.commits, sender->getComputerId(), FsElt::getComputerId(answer.commits.front()) , answer.last_invalidation_time);
+		}
 	}
 
 
@@ -165,27 +185,29 @@ namespace supercloud {
 		saved_request.request_to = cid;
 		saved_request.request_id = unregistered_request.request_id;
 		saved_request.our_answer.from = cid;
+		saved_request.our_answer.request_id = unregistered_request.request_id;
 		saved_request.start = m_network->getCurrentTime();
 		return saved_request;
 	}
 
-	std::future<SynchTreeMessageManager::TreeAnswerPtr> SynchTreeMessageManager::fetchTree(FsID root) {
+	std::future<SynchTreeMessageManager::TreeAnswerPtr> SynchTreeMessageManager::fetchTree(FsID root, ComputerId cid) {
 		std::shared_ptr<std::promise<TreeAnswerPtr>> notify_tree_fetched{ new std::promise<TreeAnswerPtr> {} };
 		std::future<TreeAnswerPtr> future = notify_tree_fetched->get_future();
 
-		fetchTree(root, [notify_tree_fetched](TreeAnswerPtr answer) {notify_tree_fetched->set_value(answer); });
+		fetchTree(root, [notify_tree_fetched](TreeAnswerPtr answer) {notify_tree_fetched->set_value(answer); }, cid);
 
 		return future;
 	}
 
-	void SynchTreeMessageManager::fetchTree(FsID root, const std::function<void(TreeAnswerPtr)>& callback_caller) {
+	void SynchTreeMessageManager::fetchTree(FsID root, const std::function<void(TreeAnswerPtr)>& callback_caller, ComputerId enforced_cid) {
 		//choose which peers/cid is useful to fetch
 		//TODO (stop-gap: broadcast)
 		PeerList peers = m_network->getPeersCopy();
 		std::unordered_set<ComputerId> already_seen;
 		foreach(it, peers) {
-			if (!(*it)->isConnected() || already_seen.find((*it)->getComputerId()) != already_seen.end())
-			{
+			if (!(*it)->isConnected() || already_seen.find((*it)->getComputerId()) != already_seen.end()) {
+				it.erase();
+			} else if (enforced_cid != NO_COMPUTER_ID && (*it)->getComputerId() != enforced_cid) {
 				it.erase();
 			}
 		}
@@ -232,13 +254,25 @@ namespace supercloud {
 				saved_request.callbacks.push_back(callback_wait_all);
 				//send request
 				ByteBuff buff = writeTreeRequestMessage(request);
-				log(std::string("TREE REQUEST: ") + (m_network->getPeerId() % 100) + " ask " + (peer->getPeerId() % 100) + " for a request (fetch tree)");
+				log(std::string("TREE REQUEST (fetch tree): ") + (m_network->getPeerId() % 100) + " ask " + (peer->getPeerId() % 100) + " for a request (fetch tree)");
 				peer->writeMessage(*SynchMessagetype::GET_TREE, buff);// writeTreeRequestMessage(request));
 			}
 		}
 	}
 
 	ByteBuff SynchTreeMessageManager::writeTreeRequestMessage(const TreeRequest& request) {
+#ifdef _DEBUG
+		std::string st;
+		for (const FsID& id : request.roots) {
+			st += ", " + std::to_string(id%1000);
+		}
+		log(std::to_string(m_network->getPeerId()%100) + std::string(" Request docs {") + st + "}");
+		log(std::to_string(m_network->getPeerId() % 100) + std::string(" Request since") + request.last_fetch_time);
+		if (request.last_fetch_time == 0) {
+			int i = 0;
+		}
+#endif
+		assert(request.request_id);
 		ByteBuff buff;
 		buff.putULong(request.request_id);
 		buff.putSize(request.depth);
@@ -261,10 +295,33 @@ namespace supercloud {
 		for (size_t i = 0; i < nb_roots; ++i) {
 			request.roots.push_back(buffer.getULong());
 		}
+
+#ifdef _DEBUG
+		std::string st;
+		for (const FsID& id : request.roots) {
+			st += ", " + std::to_string(id % 1000);
+		}
+		log(std::to_string(m_network->getPeerId() % 100) + std::string(" Receive Request for docs {") + st + "}");
+#endif
 		return request;
 	}
 
 	ByteBuff SynchTreeMessageManager::writeTreeAnswerMessage(const TreeAnswer& answer) {
+#ifdef _DEBUG
+		std::string stC;
+		for (auto& obj : answer.created) {
+			stC += ", " + std::to_string(obj->getId() % 1000);
+		}
+		std::string stM;
+		for (auto& obj : answer.modified) {
+			stM += ", " + std::to_string(obj.elt_id % 1000);
+		}
+		std::string stD;
+		for (auto& obj : answer.deleted) {
+			stD += ", " + std::to_string(obj.elt_id % 1000);
+		}
+		log(std::to_string(m_network->getPeerId() % 100) + std::string(" Send objects {") + stC + "}, {" + stM + "}, {" + stD + "}");
+#endif
 		ByteBuff buffer;
 		buffer.putULong(answer.request_id);
 		buffer.serializeComputerId(answer.from);
@@ -274,15 +331,18 @@ namespace supercloud {
 			assert(added);
 			buffer.putULong(added->getId());
 			buffer.putSize(added->getDepth());
-			buffer.putSize(added->size());
-			buffer.putLong(added->getDate());
+			buffer.putLong(added->getCreationTime());
 			buffer.putUTF8(added->getName());
 			buffer.putUShort(added->getCUGA());
-			buffer.putULong(added->getParent());
 			buffer.putUInt(added->getGroupId());
-			if (added->getCommitsSize() > 0) {
-				buffer.putULong(added->getCommit(added->getCommitsSize() - 1).id);
-				buffer.putLong(added->getCommit(added->getCommitsSize() - 1).date);
+			buffer.putULong(added->getParent());
+			// it's possible to have a commit in an empty obj: it get data and then it's cleared (and intermediate commits may have been erased).
+			// it's not possible to have data withotu a commit
+			assert(added->getCurrent().empty() || !added->getCommits().empty());
+			assert(added->sizes().size() == added->getCurrent().size());
+			if (!added->getCommits().empty()) {
+				buffer.putULong(added->getCommits().back().id);
+				buffer.putLong(added->getCommits().back().time);
 			} else {
 				buffer.putULong(0);
 				buffer.putLong(0);
@@ -334,12 +394,11 @@ namespace supercloud {
 		for (size_t i = 0; i < created_size; ++i) {
 			FsID added_Id = buffer.getULong();
 			uint16_t added_Depth = uint16_t(buffer.getSize());
-			size_t added_size = buffer.getSize();
 			DateTime added_Date = buffer.getLong();
 			std::string added_Name = buffer.getUTF8();
 			CUGA added_CUGA = buffer.getUShort();
-			FsID added_Parent = buffer.getULong();
 			uint32_t added_GroupId = buffer.getUInt();
+			FsID added_Parent = buffer.getULong();
 			FsID commit_id = buffer.getULong();
 			DateTime commit_date = buffer.getLong();
 			size_t added_Current_size = buffer.getSize();
@@ -349,9 +408,13 @@ namespace supercloud {
 				current.push_back(buffer.getULong());
 				current_size.push_back(buffer.getSize());
 			}
-			answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ added_Id , added_Depth , added_size, added_Date , added_Name , added_CUGA , added_Parent , added_GroupId, current, current_size } });
-			if (commit_id != 0) {
-				answer.created.back()->setCommit(commit_id, commit_date);
+			answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ 
+				added_Id , added_Depth, added_Date , added_Name , added_CUGA , added_GroupId, added_Parent} });
+			if (commit_id) {
+				answer.created.back()->setCommit(current, commit_id, commit_date, current_size);
+			} else {
+				assert(current.empty());
+				assert(current_size.empty());
 			}
 		}
 		const size_t modified_size = buffer.getSize();
@@ -384,11 +447,27 @@ namespace supercloud {
 		for (size_t i = 0; i < unchanged_size; ++i) {
 			answer.unchanged.push_back(buffer.getULong());
 		}
+#ifdef _DEBUG
+		std::string stC;
+		for (auto& obj : answer.created) {
+			stC += ", " + std::to_string(obj->getId() % 1000);
+		}
+		std::string stM;
+		for (auto& obj : answer.modified) {
+			stM += ", " + std::to_string(obj.elt_id % 1000);
+		}
+		std::string stD;
+		for (auto& obj : answer.deleted) {
+			stD += ", " + std::to_string(obj.elt_id % 1000);
+		}
+		log(std::to_string(m_network->getPeerId() % 100) + std::string(" Received objects {") + stC + "}, {" + stM + "}, {" + stD + "}");
+#endif
 		return answer;
 	}
 
 	void SynchTreeMessageManager::fillTreeAnswer(ComputerId cid_requester, TreeAnswer& answer, FsID elt_id, size_t depth, DateTime since, std::unordered_set<FsID>& already_seen) {
 		FsEltPtr elt = m_filesystem->load(elt_id);
+		log(std::string("answer request from") + since);
 		if (elt) {
 			// update synch state
 			m_syncro->notifyPushElement(cid_requester, elt_id);
@@ -397,18 +476,23 @@ namespace supercloud {
 			if (FsElt::isObject(elt_id)) {
 				FsObjectPtr object = FsElt::toObject(elt);
 				//is it created, modified or deleted?
-				size_t commit_size = object->getCommitsSize();
+				size_t commit_size = object->getCommits().size();
+				log(std::string("obj ")+object->getId()+(" was created at ") + object->getCreationTime() + " ?"+(object->getCreationTime() > since)
+					+" and first commit: "+(commit_size? std::to_string(object->getCommits().back().id)+" ?"+ (object->getCommits().back().time > since) :std::string("N/A")));
 				bool unchanged = false;
-				if (object->getDate() > since) {
+				if (object->getCreationTime() > since) {
 					// the object has been created after the last fetch
 					//created
-					answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ elt_id , object->getDepth() , object->size(), object->getDate() , object->getName() ,
-						object->getCUGA() , object->getParent() , object->getGroupId(), object->getCurrent(), object->sizes() } });
+					answer.created.push_back(FsObjectTreeAnswerPtr{ new FsObjectTreeAnswer{ elt_id , object->getDepth() , object->getCreationTime() , object->getName() ,
+						object->getCUGA() , object->getGroupId(), object->getParent()} });
 					assert(answer.created.back()->getCurrent().size() == answer.created.back()->sizes().size());
-					if (object->getCommitsSize() > 0) {
-						answer.created.back()->setCommit(object->getCommit(object->getCommitsSize() - 1).id, object->getCommit(object->getCommitsSize() - 1).date);
+					if (commit_size > 0) {
+						answer.created.back()->setCommit(object->getCurrent(), object->getCommits().back().id, object->getCommits().back().time, object->sizes());
+					} else {
+						assert(object->getCurrent().empty());
+						assert(object->sizes().empty());
 					}
-				} else if (object->getDeletedDate() != 0 && (object->getDeletedDate() > since || (commit_size > 0 && object->getCommit(commit_size-1).date > since))) {
+				} else if (object->getDeletedDate() != 0 && (object->getDeletedDate() > since || (commit_size > 0 && object->getCommits().back().time > since))) {
 					// the object has been deleted, and :
 					//	. it's a deletion that occured since the last fetch
 					//  . we were notified of it since the last fetch
@@ -417,18 +501,18 @@ namespace supercloud {
 					answer.deleted.back().elt_id = elt_id;
 					answer.deleted.back().elt_depth = object->getDepth(); //? it is deleted... meh, whatever.
 					answer.deleted.back().elt_size = object->size();
-					answer.deleted.back().last_commit_id = object->getCommitsSize() == 0 ? 0 : object->getCommit(object->getCommitsSize()-1).id;
-					answer.deleted.back().last_commit_time = object->getCommitsSize() == 0 ? 0 : object->getCommit(object->getCommitsSize() - 1).date;
+					answer.deleted.back().last_commit_id = commit_size == 0 ? 0 : object->getCommits().back().id;
+					answer.deleted.back().last_commit_time = commit_size == 0 ? 0 : object->getCommits().back().time;
 					answer.deleted.back().renamed_to = object->getRenamedTo();
-				} else if(commit_size > 0 && object->getCommit(commit_size - 1).date > since) {
+				} else if(commit_size > 0 && object->getCommits().back().time > since) {
 					// the object has been modified since the last fetch
 					//modified
 					answer.modified.emplace_back();
 					answer.modified.back().elt_id = elt_id;
 					answer.modified.back().elt_depth = object->getDepth();
 					answer.modified.back().elt_size = object->size();
-					answer.modified.back().last_commit_id = object->getCommitsSize() == 0 ? 0 : object->getCommit(object->getCommitsSize() - 1).id;
-					answer.modified.back().last_commit_time = object->getCommitsSize() == 0 ? 0 : object->getCommit(object->getCommitsSize() - 1).date;
+					answer.modified.back().last_commit_id = commit_size == 0 ? 0 : object->getCommits().back().id;
+					answer.modified.back().last_commit_time = commit_size == 0 ? 0 : object->getCommits().back().time;
 					answer.modified.back().state = object->getCurrent();
 					answer.modified.back().sizes = object->sizes();
 					assert(answer.modified.back().state.size() == answer.modified.back().sizes.size());
@@ -460,7 +544,9 @@ namespace supercloud {
 		// check that each elt is up to date here.
 		// emit fetch for each elt that isn't up to date.
 		for (FsID elt_id : request.roots) {
-			if (ComputerId cid_modifier = m_syncro->isInvalidated(elt_id); cid_modifier != 0) {
+			Invalidation invalidation = m_syncro->getInvalidation(elt_id);
+			if (invalidation.commit != 0) {
+				ComputerId cid_modifier = FsElt::getComputerId(invalidation.commit);
 				// then ask for it
 
 				if (!original_treerequest) {
@@ -515,7 +601,7 @@ namespace supercloud {
 					});
 				//send request
 				ByteBuff buff = writeTreeRequestMessage(request);
-				log(std::string("TREE REQUEST: ") + (m_network->getPeerId() % 100) + " ask " + (peer->getPeerId() % 100)+" for a request (from answer tree request)");
+				log(std::string("TREE REQUEST (checkAndAnswerTreeRequest): ") + (m_network->getPeerId() % 100) + " ask " + (peer->getPeerId() % 100)+" for a request (from answer tree request)");
 				peer->writeMessage(*SynchMessagetype::GET_TREE, buff);// writeTreeRequestMessage(request));
 			}
 		}
@@ -544,31 +630,43 @@ namespace supercloud {
 		return answer;
 	}
 
-	void SynchTreeMessageManager::useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& answer) {
+	void SynchTreeMessageManager::useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& partial_answer) {
 		std::lock_guard lock{ m_mutex_incomplete_requests };
 		//fusion the result with currently waiting answers?
-		if (auto it = m_incomplete_requests.find(answer.request_id); it != m_incomplete_requests.end()) {
+		TreeAnswerRequest* our_answer_request_storage;
+		if (auto it = m_incomplete_requests.find(partial_answer.request_id); it != m_incomplete_requests.end()) {
+			assert(partial_answer.request_id);
 			log(std::string("TREE ANSWER: partial answer found in ") + (m_network->getPeerId() % 100) + " from " + (sender->getPeerId() % 100));
 			//add it into the general answer
-			it->second.our_answer.modified.insert(it->second.our_answer.modified.end(), answer.modified.begin(), answer.modified.end());
-			it->second.our_answer.created.insert(it->second.our_answer.created.end(), answer.created.begin(), answer.created.end());
-			it->second.our_answer.deleted.insert(it->second.our_answer.deleted.end(), answer.deleted.begin(), answer.deleted.end());
-			it->second.our_answer.answer_time = answer.answer_time;
+			assert(it->second.request_id == partial_answer.request_id);
+			assert(it->second.our_answer.request_id == partial_answer.request_id);
+			it->second.our_answer.modified.insert(it->second.our_answer.modified.end(), partial_answer.modified.begin(), partial_answer.modified.end());
+			it->second.our_answer.created.insert(it->second.our_answer.created.end(), partial_answer.created.begin(), partial_answer.created.end());
+			it->second.our_answer.deleted.insert(it->second.our_answer.deleted.end(), partial_answer.deleted.begin(), partial_answer.deleted.end());
+			it->second.our_answer.answer_time = partial_answer.answer_time;
+			our_answer_request_storage = &it->second;
+			assert(our_answer_request_storage->our_answer.request_id != 0);
 		} else {
 			// create a new answer.... should already be created, no? => not if we don't ask anything and the peer just want to push a change to us directly.
+			assert(partial_answer.request_id == 0);
 			log(std::to_string(m_network->getPeerId()%100) + " receive a push from " + (sender->getPeerId()%100));
-			TreeAnswerRequest& req = m_incomplete_requests[answer.request_id];
-			req.request_id = answer.request_id;
+			//registerAnswer();
+			partial_answer.request_id = FsElt::createId(FsType::NONE, m_request_id_generator.fetch_add(1), m_network->getComputerId());
+			TreeAnswerRequest& req = m_incomplete_requests[partial_answer.request_id];
+			req.request_id = partial_answer.request_id;
 			req.request_to = sender->getComputerId();
 			req.our_answer.from = sender->getComputerId();
-			req.our_answer = answer;
+			req.our_answer.request_id = partial_answer.request_id;
+			req.our_answer = partial_answer;
 			req.start = m_network->getCurrentTime();
+			our_answer_request_storage = &req;
 		}
+		TreeAnswer& answer = our_answer_request_storage->our_answer;
 
 		DateTime time = m_network->getCurrentTime();
-		assert(m_incomplete_requests[answer.request_id].start <= m_network->getCurrentTime());
-		assert(m_incomplete_requests[answer.request_id].start > 0);
-		assert(m_incomplete_requests[answer.request_id].start > m_network->getCurrentTime() - 4 * 60 * 1000);
+		assert(our_answer_request_storage->start <= m_network->getCurrentTime());
+		assert(our_answer_request_storage->start > 0);
+		assert(our_answer_request_storage->start > m_network->getCurrentTime() - 4 * 60 * 1000);
 
 		//remove change/create if they are deleted (shouldn't be transmitted, but it's better to check)
 		//TODO test
@@ -589,7 +687,7 @@ namespace supercloud {
 		for (FsID elt_id : answer.unchanged) {
 			create_change_del_unchanged.insert(elt_id);
 		}
-		for (FsID requested_id : m_incomplete_requests[answer.request_id].roots) {
+		for (FsID requested_id : our_answer_request_storage->roots) {
 			//assert(create_change_del.find(requested_id) != create_change_del.end());
 			if (create_change_del_unchanged.find(requested_id) == create_change_del_unchanged.end()) {
 				log("error: can't get an answer for tree request\n");
@@ -646,6 +744,7 @@ namespace supercloud {
 			request.last_commit_received = 0;
 			request.last_fetch_time = 0;
 			request.depth = 0;
+			request.request_id = our_answer_request_storage->request_id;
 			for (const TreeAnswerEltChange& obj : answer.modified) {
 				if (unkown_ids.erase(obj.elt_id) && !m_filesystem->hasLocally(obj.elt_id)) {
 					request.roots.push_back(obj.elt_id);
@@ -657,56 +756,59 @@ namespace supercloud {
 				}
 			}
 
-			if (auto it = m_incomplete_requests.find(answer.request_id); it != m_incomplete_requests.end()) {
-				it->second.finished = false;
-			} else {
-				assert(false);
-			}
-			log(std::string("TREE REQUEST: ") + (m_network->getPeerId() % 100) + " ask " + (sender->getPeerId() % 100) + " for a request (still unknown ids)");
+			our_answer_request_storage->finished = false;
+		
+			log(std::string("TREE REQUEST (useTreeRequestAnswer): ") + (m_network->getPeerId() % 100) + " ask " + (sender->getPeerId() % 100) + " for a request (still unknown ids)");
 			sender->writeMessage(*SynchMessagetype::GET_TREE, this->writeTreeRequestMessage(request));
 		} else {
 			//the changes are "complete"
 			// have to ordered the commit items, by depth in the filesystem.
 			std::vector<FsObjectTreeAnswer> stub_storage;
 			std::map<uint16_t, const FsObjectTreeAnswer*> ordered_stubs;
+			std::vector<const FsElt*> stubs_to_merge;
 			std::unordered_map<FsID, const FsElt*> db_stubs;
 			std::lock_guard lock{ m_filesystem->synchronize() };
 			for (FsObjectTreeAnswerPtr& obj : answer.created) {
 				assert(obj);
 				ordered_stubs[obj->getDepth()] = obj.get();
 				db_stubs[obj->getId()] = obj.get();
+				stubs_to_merge.push_back(obj.get());
 			}
 			for (const TreeAnswerEltChange& obj : answer.modified) {
-				stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.elt_size, obj.state, obj.sizes);
-				stub_storage.back().setCommit(obj.last_commit_id, obj.last_commit_time);
+				stub_storage.emplace_back(obj.elt_id, obj.elt_depth);
+				stub_storage.back().setCommit(obj.state, obj.last_commit_id, obj.last_commit_time, obj.sizes);
 				ordered_stubs[obj.elt_depth] = &stub_storage.back();
 				db_stubs[obj.elt_id] = &stub_storage.back();
+				stubs_to_merge.push_back(&stub_storage.back());
 			}
 			for (const TreeAnswerEltDeleted& obj : answer.deleted) {
-				stub_storage.emplace_back(obj.elt_id, obj.elt_depth, obj.elt_size, std::vector<FsID>{}, std::vector<size_t>{});
-				stub_storage.back().setCommit(obj.last_commit_id, obj.last_commit_time)
+				stub_storage.emplace_back(obj.elt_id, obj.elt_depth);
+				stub_storage.back().setCommit({}, obj.last_commit_id, obj.last_commit_time, {})
 					.setDeleted(obj.renamed_to, obj.last_commit_time);
 				ordered_stubs[obj.elt_depth] = &stub_storage.back();
 				db_stubs[obj.elt_id] = &stub_storage.back();
+				stubs_to_merge.push_back(&stub_storage.back());
 			}
+			
 			//update our fs with these
-			for (const auto& depth2stub : ordered_stubs) {
-				m_syncro->mergeCommit(sender->getComputerId(), *depth2stub.second, db_stubs, answer.from);
-			}
+			//for (const auto& depth2stub : ordered_stubs) {
+			//	m_syncro->mergeCommit(sender->getComputerId(), *depth2stub.second, db_stubs, answer.from);
+			//}
+			//update our fs with these
+			log(std::string("fsbefore:") + m_filesystem->getDatabase().size());
+			m_syncro->mergeCommit(sender->getComputerId(), stubs_to_merge, answer.from);
+			log(std::string("fsafter:") + m_filesystem->getDatabase().size());
+
 			// unchanged element are now validated again!
 			//Do i need ot check for the right peer? If i mess up the one i ask for, it's my fault, i guess.
 			m_syncro->removeInvalidatedElements(answer.unchanged);
 
-			if (auto it = m_incomplete_requests.find(answer.request_id); it != m_incomplete_requests.end()) {
-				it->second.finished = true;
-				it->second.finished_since = m_network->getCurrentTime();
-				//call the callbacks
-				foreach(callback_it, it->second.callbacks) {
-					callback_it.get()(&it->second.our_answer);
-					callback_it.erase();
-				}
-			} else {
-				assert(false);
+			our_answer_request_storage->finished = true;
+			our_answer_request_storage->finished_since = m_network->getCurrentTime();
+			//call the callbacks
+			foreach(callback_it, our_answer_request_storage->callbacks) {
+				callback_it.get()(&our_answer_request_storage->our_answer);
+				callback_it.erase();
 			}
 #ifndef NDEBUG
 			// assert that the resulted filesystem is safe

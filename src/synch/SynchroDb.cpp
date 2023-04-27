@@ -26,6 +26,8 @@ namespace supercloud {
         m_synch_chunk = ExchangeChunkMessageManager::create(m_network, m_file_storage, ptr());
         m_network->registerListener(*UnnencryptedMessageType::TIMER_SECOND, this->ptr());
         m_network->registerListener(*UnnencryptedMessageType::TIMER_MINUTE, this->ptr());
+        assert(m_synch_tree);
+        assert(m_synch_chunk);
     }
 
     void SynchroDb::receiveMessage(PeerPtr sender, uint8_t message_id, const ByteBuff& message) {
@@ -38,13 +40,16 @@ namespace supercloud {
             this->update(current_time);
         } else if (message_id == *UnnencryptedMessageType::TIMER_MINUTE) {
             //get current DateTime
+            if (debug_barrier) {
+                int i = 0;
+            }
             DateTime current_time = message.rewind().getLong();
             // remove old invalidation. they should already have been updated.
             {std::lock_guard lock{ m_invalidated_mutex };
                 DateTime current_time = m_network->getCurrentTime();
                 std::vector<uint64_t> old_request;
                 for (auto& id2_inv : m_invalidated) {
-                    if (id2_inv.second.since + 2 * 60 * 1000 < current_time) {
+                    if (toDateTime(id2_inv.second.date_notified) + 2 * 60 * 1000 < current_time) {
                         old_request.push_back(id2_inv.first);
                     }
                 }
@@ -149,9 +154,6 @@ namespace supercloud {
             // only send an invalidation message each 5 seconds.
             m_invalidation_wait_since_to_send = current + 5000;
         }}
-        if (test_trigger) {
-            std::cout << "ok";
-        }
         if (!copy_invalidated.empty()) {
             m_invalidation_last_sent = current;
             // even if it should be harmless, it's safer to do 'complex' things outside of the mutex.
@@ -159,7 +161,8 @@ namespace supercloud {
         }
     }
 
-    void SynchroDb::addInvalidatedElements(const std::vector<FsID>& invadidated, ComputerId sender, ComputerId modifier, DateTime last_modif_time) {
+    void SynchroDb::addInvalidatedElements(const std::vector<FsID>& invalidated, const std::vector<FsCommitID>& commits, ComputerId sender, ComputerId modifier, DateTime last_modif_time) {
+        //check i'm not the one who sent it first
         if (modifier == m_network->getComputerId()) return;
         assert(sender != m_network->getComputerId());
         //update state (or return if alredy up-to-date)
@@ -178,23 +181,65 @@ namespace supercloud {
             state.cid = modifier;
             state.last_modification_date = last_modif_time;
         }}
+
+        // remove invalidation with commits we already known
+        std::vector<size_t> good_idx;
+        {
+            std::lock_guard lock{ this->fsSynchronize() };
+            assert(invalidated.size() == commits.size());
+            for (size_t idx = 0; idx < invalidated.size(); ++idx) {
+                FsID elt_id = invalidated[idx];
+                FsCommitID inval_commit = commits[idx];
+                FsObjectPtr obj = m_file_storage->loadObject(elt_id);
+                //if not inside, then you may want keep it in the avalidation array... but it's not very useful.
+                if (obj) {
+                    //auto [last_commit, last_time] = obj->getLastModification();
+                    if (obj->getCommits().empty()) {
+                        good_idx.push_back(idx);
+                    } else {
+                        //check time of the commit
+                        bool inval_not_needed = last_modif_time < obj->getCommits().back().time;
+                        if (!inval_not_needed) {
+                            //check if the commit isn't inside.
+                            for (auto& check_commit : obj->getCommits()) {
+                                if (check_commit.id == inval_commit) {
+                                    inval_not_needed = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!inval_not_needed) {
+                            good_idx.push_back(idx);
+                        }
+                    }
+                }
+            }
+        }
+
         // populate m_invalidated_2_modifier_notifier
         std::vector<FsID> inval_by_toadd;
-        Invalidation invalidation{ modifier, sender, m_network->getCurrentTime(), last_modif_time};
+        Invalidation invalidation{ sender, toDate(m_network->getCurrentTime()), toDate(last_modif_time), 0/*commmit to fill*/};
         {std::lock_guard lock{ m_invalidated_mutex };
-        for (FsID id : invadidated) {
+        assert(invalidated.size() == commits.size());
+        for (size_t idx : good_idx) {
+            FsID id = invalidated[idx];
+            FsCommitID commit = commits[idx];
             if (auto& it = m_invalidated.find(id); it != m_invalidated.end()) {
                 //i already know. I'll change the from, for good measure.
                 it->second = invalidation;
+                it->second.commit = commit;
             } else {
-                m_invalidated[id] = invalidation;
-                inval_by_toadd.push_back(id); //notifier, to be sure we don't emit to him again.
+                Invalidation& stored_invalidation = m_invalidated[id];
+                stored_invalidation = invalidation;
+                stored_invalidation.commit = commit;
+                inval_by_toadd.push_back(id); // to be sure we don't emit to sender again. //TODO test
             }
         }}
+
         //also populate m_newly_invalidated_2_modifier_notifier if the entry is new for us.
         {std::lock_guard lock{ m_newly_invalidated_by_mutex };
         for (FsID id : inval_by_toadd) {
-            m_newly_invalidated[id] = invalidation;
+            m_newly_invalidated[id] = m_invalidated[id];
         }}
     }
 
@@ -208,10 +253,16 @@ namespace supercloud {
     bool SynchroDb::hasInvalidation() {
         return !m_invalidated.empty();
     }
-    ComputerId SynchroDb::isInvalidated(FsID to_test) {
+#ifdef _DEBUG
+    bool SynchroDb::isInvalidated(FsID to_test) {
+        std::lock_guard lock{ m_invalidated_mutex };
+        return m_invalidated.find(to_test) != m_invalidated.end();
+    }
+#endif
+    Invalidation SynchroDb::getInvalidation(FsID to_test) {
         std::lock_guard lock{ m_invalidated_mutex };
         auto it = m_invalidated.find(to_test);
-        return it == m_invalidated.end() ? 0 : it->second.modifier;
+        return it == m_invalidated.end() ? Invalidation{0,0,0,0} : it->second;
     }
     ComputerId SynchroDb::notifierInvalidation(FsID to_test) {
         std::lock_guard lock{ m_invalidated_mutex };
@@ -295,10 +346,7 @@ namespace supercloud {
                 // ask to wait at least a second before emitting it? (often, many changes are packed toguether)
                 m_invalidation_wait_since_to_send = std::max(m_network->getCurrentTime() + 1000, m_invalidation_last_sent + 5000);
             }
-            if (m_invalidated_by_me.modifier == 0 || m_invalidated_by_me.modifier == NO_COMPUTER_ID) {
-                m_invalidated_by_me = { m_network->getComputerId(),m_network->getComputerId() };
-            }
-            m_newly_invalidated[id] = m_invalidated_by_me;
+            m_newly_invalidated[id] = { m_network->getComputerId(), 0, 0, FsElt::createId(FsType::NONE, 0, m_network->getComputerId()) };
         }
         {
             std::lock_guard lock{ m_current_states_mutex };
@@ -313,15 +361,29 @@ namespace supercloud {
         }
     }
 
-    bool SynchroDb::mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db, ComputerId modifier) {
-        //update the invalidation map
-        {std::lock_guard lock_invalidation{ m_invalidated_mutex };
-            if (auto it = m_invalidated.find(to_merge.getId()); it != m_invalidated.end()) {
-                if (it->second.notifier == from || it->second.modifier == from || it->second.modifier == modifier) {
-                    m_invalidated.erase(to_merge.getId());
-                }
+    bool SynchroDb::mergeCommit(ComputerId from, const std::vector<const FsElt*>& elts_to_merge, ComputerId modifier) {
+        //it's not needed to send chunks. the file commit already has their ids.
+        std::vector<const FsObject*> objs_to_merge;
+        for (const FsElt* elt : elts_to_merge) {
+            if (FsElt::isObject(elt->getId())) {
+                objs_to_merge.push_back(static_cast<const FsObject*>(elt));
             }
         }
+
+        if (objs_to_merge.empty()) return false;
+        
+        //update the invalidation map
+        {std::lock_guard lock_invalidation{ m_invalidated_mutex };
+        for (const FsObject* elt : objs_to_merge) {
+            if (auto it = m_invalidated.find(elt->getId()); it != m_invalidated.end()) {
+                ComputerId modifier = FsElt::getComputerId(it->second.commit);
+                if (it->second.notifier == from || modifier == from || modifier == modifier) {
+                    m_invalidated.erase(elt->getId());
+                }
+            }
+        }}
+
+
         std::lock_guard lock{ m_file_storage_mutex };
         /// When we fetch data, we receive FsElt with only the last commits that should be useful for us. (it shouldn't send data much older than what we have).
         /// The object only have the most basic implementation (ids of commits with ids of content, with dates).
@@ -332,59 +394,109 @@ namespace supercloud {
         SynchState& my_state = from == 0 ? no_source : m_current_states[from];
         if (!my_state.cid) {
             //create it
-            my_state.cid = to_merge.getOwner();
+            my_state.cid = from;
         }
-        FsID last_id = my_state.last_commit;
-        assert(my_state.last_commit_date >= 0);
-        assert(my_state.last_commit_received_date >= 0);
-        if (FsElt::isChunk(to_merge.getId())) {
-            //chunk is immutable. its commit is its id.
-            if (last_id < to_merge.getId()) {
-                //update
-                my_state.last_commit = to_merge.getId();
-                my_state.last_commit_date = to_merge.getDate();
-                my_state.last_commit_received_date = m_network->getCurrentTime();
-                assert(my_state.last_commit_date > 0);
-                assert(my_state.last_commit_received_date > 0);
-
-                //it's not needed to send chunks. the file commit already has their ids.
-                assert(false);
-            }
-        } else if (FsElt::isFile(to_merge.getId())) {
-            const FsFile* file = static_cast<const FsFile*>(&to_merge);
-            assert(file->getCommitsSize() > 0);
-            const FsObjectCommit& commit = file->getCommit(file->getCommitsSize() - 1);
-            //update
-            my_state.last_commit = commit.id;
-            my_state.last_commit_date = commit.date;
-            my_state.last_commit_received_date = m_network->getCurrentTime();
-            assert(my_state.last_commit_date > 0);
-            assert(my_state.last_commit_received_date > 0);
-            //ask fs to update the file
-            return m_file_storage->mergeFileCommit(*file, extra_db);
-        } else if (FsElt::isDirectory(to_merge.getId())) {
-            const FsDirectory* dir = static_cast<const FsDirectory*>(&to_merge);
-            //assert(dir->getCommitsSize() > 0); //can be 0 if it's an empty directory
-            if (dir->getCommitsSize() > 0) {
-                const FsObjectCommit& commit = dir->getCommit(dir->getCommitsSize() - 1);
-                //update
-                my_state.last_commit = commit.id;
-                my_state.last_commit_date = commit.date;
-                my_state.last_commit_received_date = m_network->getCurrentTime();
-                assert(my_state.last_commit_date > 0);
-                assert(my_state.last_commit_received_date > 0);
+        //get last commit
+        DateTime last_commit_time = 0;
+        FsID last_commit = 0;
+        for (const FsObject* elt : objs_to_merge) {
+            if (!elt->getCommits().empty()) {
+                if (elt->getCommits().back().time > last_commit_time) {
+                    last_commit_time = elt->getCommits().back().time;
+                    last_commit = elt->getCommits().back().id;
+                }
             } else {
-                my_state.last_commit = dir->getId();
-                my_state.last_commit_date = dir->getDate();
-                my_state.last_commit_received_date = m_network->getCurrentTime();
-                assert(my_state.last_commit_date > 0);
-                assert(my_state.last_commit_received_date > 0);
+                if (elt->getCreationTime() > last_commit_time) {
+                    last_commit_time = elt->getCreationTime();
+                    last_commit = elt->getId();
+                }
             }
-            //ask fs to update the file
-            return m_file_storage->mergeDirectoryCommit(*dir, extra_db);
         }
-        return false;
+        //update
+        my_state.last_commit = last_commit;
+        my_state.last_commit_date = last_commit_time;
+        my_state.last_commit_received_date = m_network->getCurrentTime();
+        assert(my_state.last_commit_date > 0);
+        assert(my_state.last_commit_received_date > 0);
+
+        //merge
+        m_file_storage->mergeObjectsCommit(objs_to_merge);
+        return true;
     }
+
+    //bool SynchroDb::mergeCommit_deprecated(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db, ComputerId modifier) {
+    //    //update the invalidation map
+    //    {std::lock_guard lock_invalidation{ m_invalidated_mutex };
+    //        if (auto it = m_invalidated.find(to_merge.getId()); it != m_invalidated.end()) {
+    //            ComputerId modifier = FsElt::getComputerId(it->second.commit);
+    //            if (it->second.notifier == from || modifier == from || modifier == modifier) {
+    //                m_invalidated.erase(to_merge.getId());
+    //            }
+    //        }
+    //    }
+    //    std::lock_guard lock{ m_file_storage_mutex };
+    //    /// When we fetch data, we receive FsElt with only the last commits that should be useful for us. (it shouldn't send data much older than what we have).
+    //    /// The object only have the most basic implementation (ids of commits with ids of content, with dates).
+    //    /// This method use this information to modify our own implementation of the FsStorage to insert the data we diddn't known yet.
+    //    /// Note: we may only get the state of the last commit (for each object) since the last fetch. Each server have an incomplete knowledge of the past commit, as these
+    //    ///  can be destroyed at will to avoid clutter. The important thing is that a commit id is unique and the state of the FsElt for his commit is the same evrywhere.
+    //    SynchState no_source;
+    //    SynchState& my_state = from == 0 ? no_source : m_current_states[from];
+    //    if (!my_state.cid) {
+    //        //create it
+    //        my_state.cid = to_merge.getOwner();
+    //    }
+    //    FsID last_id = my_state.last_commit;
+    //    assert(my_state.last_commit_date >= 0);
+    //    assert(my_state.last_commit_received_date >= 0);
+    //    if (FsElt::isChunk(to_merge.getId())) {
+    //        //chunk is immutable. its commit is its id.
+    //        if (last_id < to_merge.getId()) {
+    //            //update
+    //            my_state.last_commit = to_merge.getId();
+    //            my_state.last_commit_date = to_merge.getCreationTime();
+    //            my_state.last_commit_received_date = m_network->getCurrentTime();
+    //            assert(my_state.last_commit_date > 0);
+    //            assert(my_state.last_commit_received_date > 0);
+
+    //            //it's not needed to send chunks. the file commit already has their ids.
+    //            assert(false);
+    //        }
+    //    } else if (FsElt::isFile(to_merge.getId())) {
+    //        const FsFile* file = static_cast<const FsFile*>(&to_merge);
+    //        assert(file->getCommits().size() > 0);
+    //        const FsObjectCommit& commit = file->getCommits().back();
+    //        //update
+    //        my_state.last_commit = commit.id;
+    //        my_state.last_commit_date = commit.date;
+    //        my_state.last_commit_received_date = m_network->getCurrentTime();
+    //        assert(my_state.last_commit_date > 0);
+    //        assert(my_state.last_commit_received_date > 0);
+    //        //ask fs to update the file
+    //        return m_file_storage->mergeFileCommit(*file, extra_db);
+    //    } else if (FsElt::isDirectory(to_merge.getId())) {
+    //        const FsDirectory* dir = static_cast<const FsDirectory*>(&to_merge);
+    //        //assert(dir->getCommitsSize() > 0); //can be 0 if it's an empty directory
+    //        if (dir->getCommits().size() > 0) {
+    //            const FsObjectCommit& commit = dir->getCommits().back();
+    //            //update
+    //            my_state.last_commit = commit.id;
+    //            my_state.last_commit_date = commit.date;
+    //            my_state.last_commit_received_date = m_network->getCurrentTime();
+    //            assert(my_state.last_commit_date > 0);
+    //            assert(my_state.last_commit_received_date > 0);
+    //        } else {
+    //            my_state.last_commit = dir->getId();
+    //            my_state.last_commit_date = dir->getCreationTime();
+    //            my_state.last_commit_received_date = m_network->getCurrentTime();
+    //            assert(my_state.last_commit_date > 0);
+    //            assert(my_state.last_commit_received_date > 0);
+    //        }
+    //        //ask fs to update the file
+    //        return m_file_storage->mergeDirectoryCommit(*dir, extra_db);
+    //    }
+    //    return false;
+    //}
     
     void SynchroDb::save(std::filesystem::path& file) {
         ByteBuff buffer;

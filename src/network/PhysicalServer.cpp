@@ -82,7 +82,7 @@ namespace supercloud {
         }
     }
 
-    int64_t update_check_NO_COMPUTER_ID = 0;
+    int64_t update_check_NO_COMPUTER_ID = 0; //FIXME
     void PhysicalServer::update(bool force_timer_update /*=false*/) {
         log(std::to_string(getPeerId() % 100) + " update, is closed? "+ this->m_state.isClosed());
         //bool quickUpdate = true;
@@ -135,7 +135,7 @@ namespace supercloud {
                     getIdentityManager().removeBadPeer(nextP);
                     nextP->close();
                     itPeers.erase();
-                }else if ((nextP->getComputerId() == 0 || nextP->getComputerId() == NO_COMPUTER_ID) && nextP->createdAt < now - 2 * 60 * 1000) {
+                }else if ((nextP->getComputerId() == NO_COMPUTER_ID) && nextP->createdAt < now - 2 * 60 * 1000) {
                     error(std::to_string(getPeerId() % 100) + std::string("Error: a peer ")+ (nextP->getPeerId()%100)+") has no id and is old(>2min) : " );
                     nextP->close();
                     itPeers.erase();

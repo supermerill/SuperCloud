@@ -85,7 +85,7 @@ namespace supercloud::test::syncchunk {
         return ByteBuff{ (uint8_t*)str.c_str(), str.size() };
     }
 
-    void addChunkToFile(FsStoragePtr fs, FsFilePtr file, const std::string& str) {
+    void addChunkToFile(FsStoragePtr fs, FsFilePtr& file, const std::string& str) {
         fs->addChunkToFile(file, (uint8_t*)&str[0], str.size());
     }
 

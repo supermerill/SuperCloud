@@ -28,6 +28,7 @@ namespace supercloud {
     typedef std::shared_ptr<FsObject> FsObjectPtr;
     typedef std::shared_ptr<FsElt> FsEltPtr;
     typedef uint64_t FsID;
+    typedef FsID FsCommitID; // same as FsID but the first two bits can be ==0
 
     // rights for computer - user - group - all
     // each group of four bits have (unused) - read - write - execute
@@ -70,7 +71,7 @@ namespace supercloud {
 
         ComputerId getMyComputerId() { assert(m_cid > 0 && m_cid != NO_COMPUTER_ID); return m_cid; }
         void setMyComputerId(ComputerId id) {
-            assert(m_cid == 0 || m_cid == NO_COMPUTER_ID);
+            assert(m_cid == NO_COMPUTER_ID);
             m_cid = id;
         }
 
@@ -88,6 +89,7 @@ namespace supercloud {
         virtual FsEltPtr load(FsID id) = 0;
         //specialized load. useful to reimplement if the storage is separate. 
         virtual FsChunkPtr loadChunk(FsID id);
+        virtual FsObjectPtr loadObject(FsID id);
         virtual FsFilePtr loadFile(FsID id);
         virtual FsDirPtr loadDirectory(FsID id);
         //create / modify elts
@@ -99,7 +101,7 @@ namespace supercloud {
         /// <param name="file"></param>
         /// <param name="data"></param>
         /// <returns>new chunk</returns>
-        virtual FsChunkPtr addChunkToFile(FsFilePtr file, uint8_t* new_data, size_t new_data_size) = 0;
+        virtual FsChunkPtr addChunkToFile(FsFilePtr& file, uint8_t* new_data, size_t new_data_size) = 0;
 
         /// <summary>
         /// Create a new chunk, and place it at the position of 'old_chunk' inside old_chunk's file.
@@ -108,7 +110,7 @@ namespace supercloud {
         /// <param name="old"></param>
         /// <param name="new_data"></param>
         /// <returns>new chunk, or nullptr if it's a deletion</returns>
-        virtual FsChunkPtr modifyChunk(FsFilePtr file, FsChunkPtr old_chunk, uint8_t* new_data, size_t new_data_size) = 0;
+        virtual FsChunkPtr modifyChunk(FsFilePtr& file, FsChunkPtr old_chunk, uint8_t* new_data, size_t new_data_size) = 0;
 
         /// <summary>
         /// Change many chunks at the same time
@@ -116,7 +118,7 @@ namespace supercloud {
         /// </summary>
         /// <param name="file"></param>
         /// <param name="new_chunks"></param>
-        virtual void modifyFile(FsFilePtr file, std::vector<ChunkOrRawData> new_chunks) = 0;
+        virtual void modifyFile(FsFilePtr& file, std::vector<ChunkOrRawData> new_chunks) = 0;
 
         // ==================================== file ====================================
 
@@ -130,7 +132,7 @@ namespace supercloud {
         /// <param name="chunks"></param>
         /// <param name="rights"></param>
         /// <returns>the new file</returns>
-        virtual FsFilePtr createNewFile(FsDirPtr directory, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777, FsFilePtr from = {}) = 0;
+        virtual FsFilePtr createNewFile(FsDirPtr& directory, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777, uint32_t group_id = 0, FsFilePtr from = {}) = 0;
 
         /// <summary>
         /// Create a new file inside a directory, replacing another one.
@@ -142,7 +144,7 @@ namespace supercloud {
         /// <param name="chunks"></param>
         /// <param name="rights"></param>
         /// <returns>the new file</returns>
-        virtual FsFilePtr modifyFile(FsFilePtr old_file, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777) = 0;
+        virtual FsFilePtr modifyFile(FsFilePtr& old_file, const std::string& name, std::vector<ChunkOrRawData> chunks = {}, CUGA rights = CUGA_7777, uint32_t group_id = 0) = 0;
 
         // ==================================== directory ====================================
 
@@ -154,14 +156,26 @@ namespace supercloud {
         /// <param name="data"></param>
         /// <param name="rights"></param>
         /// <returns>the new directory</returns>
-        virtual FsDirPtr createNewDirectory(FsDirPtr directory, const std::string& name, std::vector<FsObjectPtr> data = {}, CUGA rights = CUGA_7777, FsDirPtr from = {}) = 0;
-        virtual FsDirPtr createNewDirectory(FsDirPtr directory, const std::string& name, const std::vector<FsID>& data = {}, CUGA rights = CUGA_7777, FsDirPtr from = {}) = 0;
+        virtual FsDirPtr createNewDirectory(FsDirPtr& directory, const std::string& name, std::vector<FsObjectPtr> data = {}, CUGA rights = CUGA_7777, uint32_t group = 0, FsDirPtr from = {}) = 0;
+        virtual FsDirPtr createNewDirectory(FsDirPtr& directory, const std::string& name, const std::vector<FsID>& data = {}, CUGA rights = CUGA_7777, uint32_t group = 0, FsDirPtr from = {}) = 0;
+
+        /// <summary>
+        /// Create a new directory inside a directory, replacing another one.
+        /// You can't modify the name/right of a file, you have to create a new one (and replace the previous one)
+        /// if the name & rights haven't changed, then you can use the other method.
+        /// </summary>
+        /// <param name="old_file">replace this file inside the directory</param>
+        /// <param name="name">new name</param>
+        /// <param name="chunks"></param>
+        /// <param name="rights"></param>
+        /// <returns>the new directory</returns>
+        virtual FsDirPtr modifyDirectory(FsDirPtr& old_file, const std::string& name, const std::vector<FsID>& data = {}, CUGA rights = CUGA_7777, uint32_t group_id = 0, FsDirPtr from = {}) = 0;
 
         /// <summary>
         /// Delete a file / directory
         /// </summary>
         /// <param name="old_file">delete this object form the directory</param>
-        virtual void deleteObject(FsObjectPtr old_file) = 0;
+        virtual void deleteObject(FsObjectPtr& old_file) = 0;
 
         virtual void serialize(const std::filesystem::path& file) = 0;
         virtual void deserialize(const std::filesystem::path& file) = 0;
@@ -174,14 +188,16 @@ namespace supercloud {
         /// <param name="new_commit">stub object (hence why it's not a smart pointer: it's a temporary object). 
         /// If the associated object isn't created, a new implementation object is created.</param>
         /// <returns>true if it uses the new state</returns>
-        virtual bool mergeFileCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) = 0;
+        //virtual bool mergeFileCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) = 0;
 
         /// <summary>
         /// ask this filesystem to create a new dir/state from given information.
         /// </summary>
         /// <param name="new_commit">stub object. If the associated object isn't created, a new implementation object is created.</param>
         /// <returns>true if it uses the new state</returns>
-        virtual bool mergeDirectoryCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) = 0;
+        //virtual bool mergeDirectoryCommit(const FsObject& new_commit, const std::unordered_map<FsID, const FsElt*>& extra_db) = 0;
+
+        virtual void mergeObjectsCommit(const std::vector<const FsObject*>& commit) = 0;
 
         /// <summary>
         /// check that the filesystem has no unknown ids
@@ -192,5 +208,10 @@ namespace supercloud {
         /// <returns>true if there is no error detected/fixed</returns>
         virtual bool checkFilesystem() = 0;
 
+#ifdef _DEBUG
+        public:
+            virtual std::unordered_map<FsID, FsEltPtr>& getDatabase() = 0;
+
+#endif
     };
 }

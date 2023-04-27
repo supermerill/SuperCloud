@@ -15,20 +15,21 @@ namespace supercloud {
 		// first two bits of the id is used to get the type. please don't erase them
 		// really 64 - 24  = 40 bits.
 		const FsID m_id;
-		const DateTime m_creation_date;
+		const DateTime m_creation_time;
 	public:
-		//FsElt(uint64_t seed_id, ComputerId owner, DateTime date) :m_id(createId(seed_id, owner)), m_creation_date(date) {
+		//FsElt(uint64_t seed_id, ComputerId owner, DateTime date) :m_id(createId(seed_id, owner)), m_creation_time(date) {
 		//	assert(m_id);
 		//	assert(m_id & 0x03);
 		//}
-		FsElt(FsID id, DateTime date) : m_id(id), m_creation_date(date) {
+		FsElt(FsID id, DateTime date) : m_id(id), m_creation_time(date) {
 			assert(m_id);
 			assert(m_id & 0x03);
-			assert(m_id & COMPUTER_ID_MASK);
+			assert(m_id == 3 || getComputerId(id));
 		}
+		virtual ~FsElt() {}
 
 		/// in ms, the date for this element
-		DateTime getDate() const { return m_creation_date; }
+		DateTime getCreationTime() const { return m_creation_time; }
 		/// the creator of this element
 		ComputerId getOwner() const { return getComputerId(m_id); }
 		FsID getId() const { return m_id; }
@@ -40,6 +41,17 @@ namespace supercloud {
 		static inline ComputerId getComputerId(FsID id) {
 			return ComputerId(id >> 40) & COMPUTER_ID_MASK;
 		}
+		static inline FsType getType(FsID id) {
+			return FsType(id & 0x03);
+		}
+		static inline uint64_t getSeed(FsID id) {
+			return uint64_t( (id & SEED_MASK ) >> 2);
+		}
+
+		//to make this class polymorphic
+		virtual bool isChunk() const = 0;
+		virtual bool isFile() const = 0;
+		virtual bool isDir() const = 0;
 
 		///**
 		// * Visitor function.

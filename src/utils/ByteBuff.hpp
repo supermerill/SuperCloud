@@ -147,6 +147,9 @@ namespace supercloud {
 		/// <returns>a vector with limit()-position() bytes</returns>
 		std::vector<uint8_t> getAll() const;
 		ByteBuff& put(const std::vector<uint8_t>&);
+#ifdef _DEBUG
+		std::vector<uint8_t> view() const;
+#endif
 
 		/**
 		 * Put data into dest (from position).

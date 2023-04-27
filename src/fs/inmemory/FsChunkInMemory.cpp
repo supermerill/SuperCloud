@@ -47,7 +47,7 @@ namespace supercloud {
 	}
 
 	void FsChunkInMemory::serialize(FsChunkInMemory* t, ByteBuff& buffer) {
-		buffer.putLong(t->m_creation_date);
+		buffer.putLong(t->m_creation_time);
 		buffer.putSize(t->m_size);
 		buffer.put(t->m_is_local ? 1 : 0);
 		buffer.putULong(t->m_hash);
@@ -65,6 +65,7 @@ namespace supercloud {
 		if (is_local) {
 			std::shared_ptr<FsChunkInMemory> chunk = std::shared_ptr<FsChunkInMemory>{ 
 				new FsChunkInMemory {id, creation_date, buffer.raw_array() + buffer.position(), hash, size} };
+			buffer.position(buffer.position() + size); // update buffer position manually
 			return chunk;
 		} else {
 			std::shared_ptr<FsChunkInMemory> chunk = std::shared_ptr<FsChunkInMemory>{

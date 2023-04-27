@@ -85,7 +85,7 @@ namespace supercloud::test::synchtree {
         return ByteBuff{ (uint8_t*)str.c_str(), str.size() };
     }
 
-    void addChunkToFile(FsStoragePtr fs, FsFilePtr file, const std::string& str) {
+    void addChunkToFile(FsStoragePtr fs, FsFilePtr& file, const std::string& str) {
         fs->addChunkToFile(file, (uint8_t*)&str[0], str.size());
     }
 
@@ -109,7 +109,7 @@ namespace supercloud::test::synchtree {
         //create synch
         SynchPtr synch = SynchroDb::create();
         synch->init(fs, serv);
-        //synch->launch(); //create message manager
+        synch->launch(); //create message manager
         return std::tuple< FsStoragePtr, SynchPtr, TreeManaPtr>{fs, synch, synch->test_treeManager()};
     }
 
@@ -167,9 +167,9 @@ namespace supercloud::test::synchtree {
                     //(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state)
                     size_t new_size = rand_u63();
                     data_1.created.push_back(SynchTreeMessageManager::FsObjectTreeAnswerPtr{ new SynchTreeMessageManager::FsObjectTreeAnswer{
-                        newid(), rand_u16(), new_size, serv->getCurrentTime(), "test", rand_u16(), newid(), uint32_t(rand_u63()), std::vector<FsID>{ newid(), newid() }, std::vector<FsID>{ new_size-1, 1 }} });
+                        newid()/*id*/, rand_u16()/*depth*/, serv->getCurrentTime()/*time*/, "test"/*name*/, rand_u16()/*puga*/, uint32_t(rand_u63())/*group*/, newid()/*parent*/ }});
                     if (rand_u8() % 2 == 1) {
-                        data_1.created.back()->setCommit(rand_u63(), rand_u63());
+                        data_1.created.back()->setCommit(std::vector<FsID>{ newid(), newid() }/*states*/, rand_u63() /*commit id*/, rand_u63()/*commit_time*/, std::vector<FsID>{ new_size - 1, 1 }/*sizes*/);
                     }
                 }
                 if (rand_u8() % 4 == 2) {

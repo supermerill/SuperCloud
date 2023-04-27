@@ -306,7 +306,7 @@ namespace supercloud{
         if (messageId == *UnnencryptedMessageType::GET_CONNECTION_ESTABLISHED) {
             if (status[sender].current < ConnectionStep::AES) {
                 requestCurrentStep(sender, true);
-            } else if (sender->getComputerId() == 0 || sender->getComputerId() == NO_COMPUTER_ID
+            } else if (sender->getComputerId() == NO_COMPUTER_ID
                 || clusterManager->getIdentityManager().getPeerData(sender).aes_key.size() == 0) {
                 status[sender].current = ConnectionStep::RSA;
                 requestCurrentStep(sender, true);
@@ -386,7 +386,7 @@ namespace supercloud{
          const ComputerId my_current_computer_id = clusterManager->getComputerId();
         // check if we have a computerId
          bool need_new_id = clusterManager->getIdentityManager().getComputerIdState() == IdentityManager::ComputerIdState::NOT_CHOOSEN 
-             || my_current_computer_id == NO_COMPUTER_ID || my_current_computer_id == 0;
+             || my_current_computer_id == NO_COMPUTER_ID;
          bool has_confict = false;
          if (!need_new_id) {
              need_new_id = clusterManager->getIdentityManager().getPublicKey().empty();

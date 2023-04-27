@@ -20,6 +20,7 @@ namespace supercloud {
         virtual size_t chooseChunkSize(FsFilePtr file, std::vector<size_t> current_sizes, size_t current_size, size_t new_size, size_t idx_new_chunk) = 0;
     };
 
+
     class BasicChunkSizer : public ChunkSizer {
     public:
         size_t chooseChunkSize(FsFilePtr file, std::vector<size_t> current_sizes, size_t current_size, size_t new_size, size_t idx_new_chunk) override {
@@ -64,7 +65,7 @@ namespace supercloud {
         // true if we have a direct link
         bool is_neighbor = false;
         // last commit created on the computer
-        FsID last_commit = 0;
+        FsCommitID last_commit = 0;
         // date of the commit (cache to avoid calling the fs)
         DateTime last_commit_date = 0;
         // date of the moment we where notified of it.
@@ -114,10 +115,10 @@ namespace supercloud {
     };
 
     struct Invalidation {
-        ComputerId modifier; // the computer that creates the invalidation 
         ComputerId notifier; // the computer that notified us.
-        Date since; // when we were notified of this invalidation.
-        Date time; // when the invalidation was created.
+        Date date_notified; // when we were notified of this invalidation.
+        Date date_invalidation; // when the invalidation was created.
+        FsCommitID commit; // the new commit that invalidated the elt. the cid inside is the modifier
     };
 
     class SynchroDb : public AbstractMessageManager, public std::enable_shared_from_this<SynchroDb> {
@@ -164,7 +165,6 @@ namespace supercloud {
         std::unordered_map<FsID, Invalidation> m_newly_invalidated;
         DateTime m_invalidation_last_sent;
         DateTime m_invalidation_wait_since_to_send;
-        Invalidation m_invalidated_by_me; // cache for getComputerId()
 
         // ------ changes that I should send to my peers (before closing, or each minute) ------
         // they should already be notified that i changed it.
@@ -191,7 +191,6 @@ namespace supercloud {
 
         SynchroDb() {}
     public:
-        static inline bool test_trigger = false;
         //factory
         [[nodiscard]] static std::shared_ptr<SynchroDb> create() {
             std::shared_ptr<SynchroDb> pointer = std::shared_ptr<SynchroDb>{ new SynchroDb(/*TODO*/) };
@@ -202,7 +201,8 @@ namespace supercloud {
             return shared_from_this();
         }
 
-        static inline Date MAX_RETENTION_DELETION_INFO = 60 * 24 * 30; // after 30 days, remove entries 'i don't have the chunk anymore'
+        static inline bool debug_barrier = false;
+        static inline const Date MAX_RETENTION_DELETION_INFO = 60 * 24 * 30; // after 30 days, remove entries 'i don't have the chunk anymore'
 
         void init(std::shared_ptr<FsStorage> file_storage, std::shared_ptr<ClusterManager> network);
 
@@ -244,7 +244,8 @@ namespace supercloud {
         /// <param name="new_commit"></param>
         /// <param name="commit_time"></param>
         /// <param name="modifier">The computer that has created this commit/revision</param>
-        bool mergeCommit(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db, ComputerId modifier = NO_COMPUTER_ID);
+        //bool mergeCommit_deprecated(ComputerId from, const FsElt& to_merge, const std::unordered_map<FsID, const FsElt*>& extra_db, ComputerId modifier = NO_COMPUTER_ID);
+        bool mergeCommit(ComputerId from, const std::vector<const FsElt*>& to_merge, ComputerId modifier = NO_COMPUTER_ID);
 
         /// <summary>
         /// Ensure that this element is up to date (for file & dir) and locally accessible (for chunk, but you should use retreiveChunks instead).
@@ -267,10 +268,13 @@ namespace supercloud {
 
         void notifyObjectChanged(FsID id);
 
-        void addInvalidatedElements(const std::vector<FsID>& invadidated, ComputerId sender, ComputerId modifier, DateTime last_modif_time);
+        void addInvalidatedElements(const std::vector<FsID>& invadidated, const std::vector<FsCommitID>& commits, ComputerId sender, ComputerId modifier, DateTime last_modif_time);
         void removeInvalidatedElements(const std::vector<FsID>& not_invadidated_anymore);
         bool hasInvalidation();
-        ComputerId isInvalidated(FsID to_test);
+#ifdef _DEBUG
+        bool isInvalidated(FsID to_test);
+#endif
+        Invalidation getInvalidation(FsID to_test);
         ComputerId notifierInvalidation(FsID to_test);
 
         void load(std::filesystem::path& file);
@@ -281,6 +285,22 @@ namespace supercloud {
             ComputerId cid = m_network->getComputerId();
             if (cid == 0) return NO_COMPUTER_ID;
             return cid;
+        }
+        std::unordered_set<ComputerId> getComputerIds() {
+            std::unordered_set<ComputerId> cids;
+            {
+                std::lock_guard lock{ m_computer_states_mutex };
+                for (auto& cs : m_computer_states) {
+                    cids.insert(cs.first);
+                }
+            }
+            {
+                std::lock_guard lock{ m_current_states_mutex };
+                for (auto& cs : m_current_states) {
+                    cids.insert(cs.first);
+                }
+            }
+            return cids;
         }
         ComputerState getComputerState(ComputerId cid) {
             std::lock_guard lock{ m_computer_states_mutex };

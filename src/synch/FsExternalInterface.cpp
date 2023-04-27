@@ -50,13 +50,17 @@ namespace supercloud {
         size_t next_sep = path_next.find_first_of(path.preferred_separator);
 
         //check if in invalidated id
-        if (m_db->isInvalidated(dir->getId()) && max_retries > 0) {
+        Invalidation dir_invalidation = m_db->getInvalidation(dir->getId());
+        if (dir_invalidation.commit != 0 && max_retries > 0) {
             m_db->askForFsSynch(dir->getId(), [path, promise_ptr, max_retries, this](FsEltPtr result) { 
                 this->get(path, promise_ptr, max_retries-1); 
                 });
             return;
-        }if (m_db->isInvalidated(dir->getId())) {
-            assert(false);
+        }
+        if (dir_invalidation.commit != 0) {
+            //assert(false); //happen if the peer that create it isn't connected
+            promise_ptr->set_value(ObjectRequestAnswer{ "unreachable", 2 });
+            return;
         }
         while (next_sep != std::string::npos) {
             dir_name = path_next.substr(0, next_sep);
@@ -75,7 +79,7 @@ namespace supercloud {
                 promise_ptr->set_value(ObjectRequestAnswer{ "not found", 2 });
                 return;
             }
-            if (m_db->isInvalidated(dir->getId())) {
+            if (dir_invalidation.commit != 0) {
                 m_db->askForFsSynch(dir->getId(), [path, promise_ptr, this](FsEltPtr result) { this->get(path, promise_ptr); });
                 return;
             }
@@ -98,7 +102,7 @@ namespace supercloud {
                 promise_ptr->set_value(ObjectRequestAnswer{ "not found", 2 });
                 return;
             }
-            if (m_db->isInvalidated(dir->getId())) {
+            if (dir_invalidation.commit != 0) {
                 m_db->askForFsSynch(dir->getId(), [path, promise_ptr, this](FsEltPtr result) { this->get(path, promise_ptr); });
                 return;
             }
@@ -649,11 +653,11 @@ namespace supercloud {
                 chunks.push_back(ChunkOrRawData{ chunk, size, nullptr, 0 });
                 size = 0; // fake size for file size computation
             }
-            m_db->m_file_storage->createNewFile(dir, path_next, chunks, obj->getCUGA(), FsElt::toFile(obj));
+            m_db->m_file_storage->createNewFile(dir, path_next, chunks, obj->getCUGA(), obj->getGroupId(), FsElt::toFile(obj));
             m_db->m_file_storage->deleteObject(obj);
         } else {
             assert(FsElt::isDirectory(obj->getId()));
-            m_db->m_file_storage->createNewDirectory(dir, path_next, obj->getCurrent(), obj->getCUGA(), FsElt::toDirectory(obj));
+            m_db->m_file_storage->createNewDirectory(dir, path_next, obj->getCurrent(), obj->getCUGA(), obj->getGroupId(), FsElt::toDirectory(obj));
             m_db->m_file_storage->deleteObject(obj);
         }
         new_dir_parent_id = dir->getId();
@@ -673,11 +677,11 @@ namespace supercloud {
                 chunks.push_back(ChunkOrRawData{ chunk, size, nullptr, 0 });
                 size = 0; // fake size for file size computation
             }
-            m_db->m_file_storage->createNewFile(m_db->m_file_storage->loadDirectory(obj->getParent()), obj->getName(), chunks, rights, FsElt::toFile(obj));
+            m_db->m_file_storage->createNewFile(m_db->m_file_storage->loadDirectory(obj->getParent()), obj->getName(), chunks, rights, obj->getGroupId(), FsElt::toFile(obj));
             m_db->m_file_storage->deleteObject(obj);
         } else {
             assert(FsElt::isDirectory(obj->getId()));
-            m_db->m_file_storage->createNewDirectory(m_db->m_file_storage->loadDirectory(obj->getParent()), obj->getName(), obj->getCurrent(), rights, FsElt::toDirectory(obj));
+            m_db->m_file_storage->createNewDirectory(m_db->m_file_storage->loadDirectory(obj->getParent()), obj->getName(), obj->getCurrent(), rights, obj->getGroupId(), FsElt::toDirectory(obj));
             m_db->m_file_storage->deleteObject(obj);
         }
         }//mutex

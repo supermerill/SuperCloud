@@ -63,6 +63,8 @@ add_library(libsupercloud STATIC
     synch/FsExternalInterface.hpp
 	synch/SynchTreeMessageManager.cpp
 	synch/SynchTreeMessageManager.hpp
+	synch/SynchroAtConnection.cpp
+	synch/SynchroAtConnection.hpp
 	synch/SynchroDb.cpp
 	synch/SynchroDb.hpp
 	os/FuseImpl.hpp

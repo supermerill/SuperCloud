@@ -18,7 +18,7 @@ namespace supercloud::test::inmemory {
 		return ByteBuff{ (uint8_t*)str.c_str(), str.size() };
 	}
 
-	void addChunkToFile(FsStorage& fs, FsFilePtr file, const std::string& str) {
+	void addChunkToFile(FsStorage& fs, FsFilePtr& file, const std::string& str) {
 		fs.addChunkToFile(file, (uint8_t*)&str[0], str.size());
 	}
 
@@ -31,7 +31,7 @@ namespace supercloud::test::inmemory {
 	}
 	class MyClock : public Clock {
 	public:
-		virtual DateTime getCurrrentTime() { return get_current_time_milis(); }
+		virtual DateTime getCurrentTime() override { return this->get_current_time_milis(); }
 	};
 
 	SCENARIO("Test FsStorageInMemory") {
@@ -58,6 +58,8 @@ namespace supercloud::test::inmemory {
 
 		REQUIRE(fs.checkFilesystem());
 		REQUIRE(fs2.checkFilesystem());
+
+
 
 		FsDirPtr root_bis = FsElt::toDirectory(fs2.load(fs2.getRoot()));
 		REQUIRE(root_bis->getName() == root->getName());
@@ -88,6 +90,20 @@ namespace supercloud::test::inmemory {
 		std::string strchunk = toString(FsChunkInMemory::readAll(*FsElt::toChunk(fs2.load(fic11_1_bis->getCurrent()[0]))));
 		REQUIRE(strchunk == std::string("bla bla"));
 
+		REQUIRE(FsElt::getComputerId(root->getId()) == 0);
+		REQUIRE(FsElt::getComputerId(root_bis->getId()) == 0);
+		REQUIRE(FsElt::getComputerId(dir1->getId()) == 42);
+		REQUIRE(FsElt::getComputerId(dir1_bis->getId()) == 42);
+		REQUIRE(FsElt::getComputerId(dir1->getCommits().back().id) == 42);
+		REQUIRE(FsElt::getComputerId(dir1_bis->getCommits().back().id) == 42);
+		REQUIRE(FsElt::getComputerId(dir11->getId()) == 42);
+		REQUIRE(FsElt::getComputerId(dir11_bis->getId()) == 42);
+		REQUIRE(FsElt::getComputerId(dir11->getCommits().back().id) == 42);
+		REQUIRE(FsElt::getComputerId(dir11_bis->getCommits().back().id) == 42);
+		REQUIRE(FsElt::getComputerId(fic11_1->getId()) == 42);
+		REQUIRE(FsElt::getComputerId(fic11_1_bis->getId()) == 42);
+		REQUIRE(FsElt::getComputerId(fic11_1->getCommits().back().id) == 42);
+		REQUIRE(FsElt::getComputerId(fic11_1_bis->getCommits().back().id) == 42);
 
 		std::filesystem::remove(tmp_path);
 	}
@@ -111,128 +127,40 @@ namespace supercloud::test::inmemory {
 
 		//fake commits from cid 88
 		FsID new_file_id = FsElt::createId(FsType::FILE, 1, 88);
-		FsDirectoryInMemory new_dir{ FsElt::createId(FsType::DIRECTORY, 2, 88), clock->getCurrrentTime(), "new dir", CUGA_7777, dir1->getId() };
-		new_dir.replaceContent({ new_file_id }, FsObjectCommit{ new_file_id , clock->getCurrrentTime() , {{0, new_file_id}} });
-		FsDirectoryInMemory new_root_dir{ FsElt::createId(FsType::DIRECTORY, 3, 88), clock->getCurrrentTime(), "newrootdir", CUGA_7777, FsID(FsType::DIRECTORY) };
-		FsFileInMemory new_file{ new_file_id, clock->getCurrrentTime(), "new file", CUGA_7777, new_dir.getId() };
-		FsFileInMemory new_root_file{ FsElt::createId(FsType::FILE, 4, 88), clock->getCurrrentTime(), "newrootfile", CUGA_7777, FsID(FsType::DIRECTORY) };
-		FsDirectoryInMemory new_root_state{ root->getId(),  root->getDate(), root->getName(), root->getCUGA(), root->getParent() };
-		{
-			new_root_state.replaceContent(root->getCurrent(), root->getCommit(0));
-			new_root_state.replaceContent(root->getCurrent(), root->getCommit(1));
-			std::vector<FsID> current = root->getCurrent();
-			current.push_back(new_root_dir.getId());
-			current.push_back(new_root_file.getId());
-			FsObjectCommit commit{ FsElt::createId(FsType::FILE, 5, 88), new_root_file.getDate(), {{0,new_root_dir.getId()},{0,new_root_file.getId()}} };
-			new_root_state.replaceContent(current, commit);
-		}
-		FsDirectoryInMemory new_dir1_state{ dir1->getId(),  dir1->getDate(), dir1->getName(), dir1->getCUGA(), dir1->getParent() };
-		{
-			new_dir1_state.replaceContent(dir1->getCurrent(), dir1->getCommit(0));
-			std::vector<FsID> current = dir1->getCurrent();
-			current.push_back(new_dir.getId());
-			FsObjectCommit commit{ FsElt::createId(FsType::FILE, 5, 88), new_root_file.getDate(), {{0,new_dir.getId()}} };
-			new_dir1_state.replaceContent(current, commit);
-		}
-		std::unordered_map<FsID, const FsElt*> commits;
-		commits[new_dir.getId()] = &new_dir;
-		commits[new_root_dir.getId()] = &new_root_dir;
-		commits[new_file.getId()] = &new_file;
-		commits[new_root_file.getId()] = &new_root_file;
-		commits[new_root_state.getId()] = &new_root_state;
-		commits[new_dir1_state.getId()] = &new_dir1_state;
-		bool res = fs.mergeObjectCommit(new_dir, commits);
-		REQUIRE(res);
-		REQUIRE(fs.loadDirectory(new_dir.getId())->getCurrent().size() == 1);
-		REQUIRE(fs.loadDirectory(new_dir.getId())->getCurrent().front() == new_file_id);
-		REQUIRE(fs.loadDirectory(dir1->getId())->getCurrent().size() == 1);
-		REQUIRE(fs.loadFile(new_file_id));
-		res = fs.mergeObjectCommit(new_root_dir, commits);
-		REQUIRE(res);
-		REQUIRE(fs.loadDirectory(fs.getRoot())->getCurrent().size() == 2);
-		res = fs.mergeObjectCommit(new_file, commits);
-		REQUIRE(res);
-		REQUIRE(fs.loadDirectory(new_dir.getId())->getCurrent().size() == 1);
-		REQUIRE(fs.loadFile(new_file_id));
-		res = fs.mergeObjectCommit(new_root_file, commits);
-		REQUIRE(res);
-		REQUIRE(fs.loadDirectory(fs.getRoot())->getCurrent().size() == 2);
-
-		res = fs.mergeObjectCommit(new_root_state, commits);
-		res = fs.mergeObjectCommit(new_dir1_state, commits);
-		REQUIRE(fs.loadDirectory(fs.getRoot())->getCurrent().size() == 4);
-		REQUIRE(fs.loadDirectory(dir1->getId())->getCurrent().size() == 2);
-
-		REQUIRE(fs.checkFilesystem());
-
-		REQUIRE(contains(fs.loadDirectory(fs.getRoot())->getCurrent(), new_root_dir.getId()));
-		REQUIRE(fs.loadDirectory(FsElt::createId(FsType::DIRECTORY, 2, 88))->getCurrent().size() == 1);
-		REQUIRE(contains(fs.loadDirectory(fs.getRoot())->getCurrent(), new_root_file.getId()));
-
-	}
-	SCENARIO("Test FsStorageInMemory merge commits (other order)") {
-		std::shared_ptr<MyClock> clock = std::make_shared<MyClock>();
-
-		FsStorageInMemory fs{ 42, clock };
-
-		FsDirPtr root = fs.createNewRoot();
-		FsDirPtr dir1 = fs.createNewDirectory(root, "dir1");
-		FsDirPtr dir11 = fs.createNewDirectory(dir1, "dir11");
-		FsFilePtr fic11_1 = fs.createNewFile(dir11, "fic11_1.txt");
-		FsFilePtr fi_readme = fs.createNewFile(root, "README.txt");
-
-		addChunkToFile(fs, fi_readme, ("Premier test de système de fichiers"));
-		addChunkToFile(fs, fic11_1, ("bla bla"));
-		addChunkToFile(fs, fic11_1, ("\n deuxième ligne"));
-		REQUIRE(fs.checkFilesystem());
-
-		//fake commits from cid 88
-		FsID new_file_id = FsElt::createId(FsType::FILE, 1, 88);
-		FsDirectoryInMemory new_dir{ FsElt::createId(FsType::DIRECTORY, 2, 88), clock->getCurrrentTime(), "new dir", CUGA_7777, dir1->getId() };
-		new_dir.replaceContent({ new_file_id }, FsObjectCommit{ new_file_id , clock->getCurrrentTime() , {{0, new_file_id}} });
-		FsDirectoryInMemory new_root_dir{ FsElt::createId(FsType::DIRECTORY, 3, 88), clock->getCurrrentTime(), "newrootdir", CUGA_7777, FsID(FsType::DIRECTORY) };
-		FsFileInMemory new_file{ new_file_id, clock->getCurrrentTime(), "new file", CUGA_7777, new_dir.getId() };
-		FsFileInMemory new_root_file{ FsElt::createId(FsType::FILE, 4, 88), clock->getCurrrentTime(), "newrootfile", CUGA_7777, FsID(FsType::DIRECTORY) };
-		FsDirectoryInMemory new_root_state{ root->getId(),  root->getDate(), root->getName(), root->getCUGA(), root->getParent() };
-		{
-			new_root_state.replaceContent(root->getCurrent(), root->getCommit(0));
-			new_root_state.replaceContent(root->getCurrent(), root->getCommit(1));
-			std::vector<FsID> current = root->getCurrent();
-			current.push_back(new_root_dir.getId());
-			current.push_back(new_root_file.getId());
-			FsObjectCommit commit{ FsElt::createId(FsType::FILE, 5, 88), new_root_file.getDate(), {{0,new_root_dir.getId()},{0,new_root_file.getId()}} };
-			new_root_state.replaceContent(current, commit);
-		}
-		FsDirectoryInMemory new_dir1_state{ dir1->getId(),  dir1->getDate(), dir1->getName(), dir1->getCUGA(), dir1->getParent() };
-		{
-			new_dir1_state.replaceContent(dir1->getCurrent(), dir1->getCommit(0));
-			std::vector<FsID> current = dir1->getCurrent();
-			current.push_back(new_dir.getId());
-			FsObjectCommit commit{ FsElt::createId(FsType::FILE, 5, 88), new_root_file.getDate(), {{0,new_dir.getId()}} };
-			new_dir1_state.replaceContent(current, commit);
-		}
-		std::unordered_map<FsID, const FsElt*> commits;
-		commits[new_dir.getId()] = &new_dir;
-		commits[new_root_dir.getId()] = &new_root_dir;
-		commits[new_file.getId()] = &new_file;
-		commits[new_root_file.getId()] = &new_root_file;
-		commits[new_root_state.getId()] = &new_root_state;
-		commits[new_dir1_state.getId()] = &new_dir1_state;
-		bool res = true;
-		res &= fs.mergeObjectCommit(new_root_state, commits);
-		res &= fs.mergeObjectCommit(new_dir1_state, commits);
-		res &= fs.mergeObjectCommit(new_root_dir, commits);
-		res &= fs.mergeObjectCommit(new_root_file, commits);
-		res &= fs.mergeObjectCommit(new_dir, commits);
-		res &= fs.mergeObjectCommit(new_file, commits);
-		REQUIRE(res);
-		REQUIRE(fs.checkFilesystem());
+		FsFileInMemory new_root_file{ FsElt::createId(FsType::FILE, 4, 88), clock->getCurrentTime(), "newrootfile", CUGA_7777, 0, root->getId(), uint16_t(1), 0, {},{},0,0,{} };
+		FsDirectoryInMemory new_root_dir{ FsElt::createId(FsType::DIRECTORY, 3, 88), clock->getCurrentTime(), "newrootdir", CUGA_7777,  0/*groupid*/, root->getId(),uint16_t(1), 0,
+			{},{},0,0,0,0 };
+		FsDirectoryInMemory new_dir{ FsElt::createId(FsType::DIRECTORY, 2, 88), clock->getCurrentTime(), "new dir", CUGA_7777, 0/*groupid*/, dir1->getId()/*parent*/, uint16_t(new_root_dir.getDepth()+1)/*depth*/, 0/*renamedfrom*/,
+			{ new_file_id } , {FsObjectCommit{ new_file_id , clock->getCurrentTime() , {{0, new_file_id}} }}, 0, 0, 0, 0 };
+		FsFileInMemory new_file{ new_file_id, clock->getCurrentTime(), "new file", CUGA_7777, 0, new_dir.getId(), uint16_t(new_dir.getDepth()+1), 0, {},{},0,0,{} };
+		//FsDirectoryInMemory new_root_state{ root->getId(),  root->getCreationTime(), root->getName(), root->getCUGA(), 0, root->getParent(), 0, 0, { };
+		FsDirectoryInMemoryFactory new_root_factory{ root.get() };
+		assert(new_root_factory.current_state.size() == 2);
+		new_root_factory.replaceContent(
+			{ new_root_factory.current_state[0], new_root_factory.current_state[1], new_root_dir.getId() , new_root_file.getId() },
+			FsObjectCommit{ FsElt::createId(FsType::FILE, 5, 88), new_root_file.getCreationTime(), {{0,new_root_dir.getId()},{0,new_root_file.getId()}} }
+			);
+		FsDirectoryInMemoryPtr new_root_state = new_root_factory.create(root.get());
+		
+		//FsDirectoryInMemory new_dir1_state{ dir1->getId(),  dir1->getCreationTime(), dir1->getName(), dir1->getCUGA(), dir1->getParent() };
+		FsDirectoryInMemoryFactory new_dir1_factory{ dir1.get() };
+		assert(new_dir1_factory.current_state.size() == 1);
+		new_dir1_factory.replaceContent(
+			{ new_dir1_factory.current_state[0], new_dir.getId() },
+			FsObjectCommit{ FsElt::createId(FsType::FILE, 5, 88), new_root_file.getCreationTime(), {{0,new_dir.getId()}} }
+		);
+		FsDirectoryInMemoryPtr new_dir1_state = new_dir1_factory.create(dir1.get());
+		
+		std::vector<const FsObject*> commits = {
+		&new_dir, &new_root_dir, &new_file, &new_root_file, new_root_state.get(), new_dir1_state.get() };
+		fs.mergeObjectsCommit(commits);
 		REQUIRE(fs.loadDirectory(new_dir.getId())->getCurrent().size() == 1);
 		REQUIRE(fs.loadDirectory(new_dir.getId())->getCurrent().front() == new_file_id);
 		REQUIRE(fs.loadFile(new_file_id));
 		REQUIRE(fs.loadDirectory(fs.getRoot())->getCurrent().size() == 4);
 		REQUIRE(fs.loadDirectory(dir1->getId())->getCurrent().size() == 2);
 
+		REQUIRE(fs.checkFilesystem());
 
 		REQUIRE(contains(fs.loadDirectory(fs.getRoot())->getCurrent(), new_root_dir.getId()));
 		REQUIRE(fs.loadDirectory(FsElt::createId(FsType::DIRECTORY, 2, 88))->getCurrent().size() == 1);

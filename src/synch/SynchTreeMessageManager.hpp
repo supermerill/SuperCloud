@@ -42,67 +42,54 @@ namespace supercloud {
 		};
 		//a fake object, to have all information about the last state of the object (with id & date of the last commit, but no data inside)
 		class FsObjectTreeAnswer : public FsObject {
-			uint16_t m_depth;
 			std::vector<size_t> m_sizes;
 			size_t m_size;
 		public:
-			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, DateTime date, std::string name, CUGA puga, FsID parent, uint32_t group, std::vector<FsID> state, std::vector<size_t> sizes) :
-				FsObject(id, date, name, puga, parent), m_depth(depth), m_size(size) {
-				m_current_state = state;
-				m_sizes = sizes;
-				m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
-				assert(FsElt::isDirectory(id) || size == m_size);
-				assert(m_sizes.size() == m_current_state.size());
+			FsObjectTreeAnswer(FsID obj_id, uint16_t depth, DateTime creation_time, std::string name, CUGA puga, uint32_t group, FsID parent) :
+				FsObject(obj_id, creation_time, name, puga, group, parent, depth, 0, {}, {}, 0, 0), m_sizes(), m_size(0) {
 			}
-			FsObjectTreeAnswer(FsID id, uint16_t depth, size_t size, std::vector<FsID> state, std::vector<size_t> sizes) :
-				FsObject(id, 0, "", 0, 0), m_depth(depth), m_size(size) {
-				m_current_state = state;
-				m_sizes = sizes;
-				m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
-				assert(FsElt::isDirectory(id) || size == m_size);
-				assert(m_sizes.size() == m_current_state.size());
+			FsObjectTreeAnswer(FsID id, uint16_t depth) :
+				FsObject(id, 0 /*time*/, "", 0, 0, 0/*parent*/, depth, 0, {}, { }, 0, 0), m_sizes(), m_size(0) {
 			}
-			FsObjectTreeAnswer& setCommit(FsID id_commit, DateTime date) {
+			FsObjectTreeAnswer& setCommit(std::vector<FsID> state, FsID id_commit, DateTime time, std::vector<size_t> sizes) {
+				m_current_state = state;
 				m_commits.emplace_back();
 				m_commits.back().id = id_commit;
-				m_commits.back().date = date;
+				m_commits.back().time = time;
+				m_sizes = sizes;
+				m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
 				return *this;
 			}
-			FsObjectTreeAnswer& setDeleted(FsID renamed_to, DateTime date) {
-				m_date_deleted = date;
+			FsObjectTreeAnswer& setDeleted(FsID renamed_to, DateTime time) {
+				m_time_deleted = time;
 				m_renamed_to = renamed_to;
 				return *this;
 			}
 			//default -set
 			FsObjectTreeAnswer(const FsObjectTreeAnswer& o) // can copy
-				:FsObject(o.m_id, o.m_creation_date, o.m_name, o.m_puga, o.m_parent), m_depth(o.m_depth) {
-				m_current_state = std::move(o.m_current_state);
-				m_sizes = std::move(o.m_sizes);
+				:FsObject(o.m_id, o.m_creation_time, o.m_name, o.m_puga, o.m_group_id, o.m_parent, o.m_depth, o.m_renamed_from, 
+					o.m_current_state, o.m_commits, o.m_time_deleted, o.m_renamed_to), m_sizes(o.m_sizes){
+				m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
 			}
-			FsObjectTreeAnswer(FsObjectTreeAnswer&& o) // can move
-				:FsObject(o.m_id, o.m_creation_date, o.m_name, o.m_puga, o.m_parent), m_depth(o.m_depth) {
-				m_current_state = std::move(o.m_current_state);
-				m_sizes = std::move(o.m_sizes);
-			}
-			uint16_t getDepth() const override {
-				return m_depth;
-			}
+			//FsObjectTreeAnswer(FsObjectTreeAnswer&& o) // can move
+			//	:FsObject(o), m_depth(o.m_depth), m_sizes(std::move(o.m_sizes)) {
+			//	m_size = std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0));
+			//}
 			size_t size() const override {
 				assert(FsElt::isDirectory(m_id) || std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0)) == m_size);
 				return m_size;
 			}
-			std::vector<size_t> sizes() const override {
+			const std::vector<size_t>& sizes() const override {
 				assert(FsElt::isDirectory(m_id) || std::accumulate(m_sizes.begin(), m_sizes.end(), size_t(0)) == m_size);
 				assert(m_sizes.size() == m_current_state.size());
 				return m_sizes;
 			}
 			bool operator==(const FsObjectTreeAnswer& other) const {
-				return m_depth == other.m_depth && m_size == other.m_size && m_id == other.m_id
-					&& m_creation_date == other.m_creation_date && m_puga == other.m_puga && m_name == other.m_name
+				return m_depth == other.m_depth && m_size == other.m_size && m_sizes == other.m_sizes && m_id == other.m_id
+					&& m_creation_time == other.m_creation_time && m_puga == other.m_puga && m_name == other.m_name
 					&& m_group_id == other.m_group_id && m_parent == other.m_parent && m_current_state == other.m_current_state
-					&& m_commits == other.m_commits && m_date_deleted == other.m_date_deleted && m_renamed_to == other.m_renamed_to
-					&& m_renamed_from == other.m_renamed_from
-					&& m_sizes == other.m_sizes;
+					&& m_commits == other.m_commits && m_time_deleted == other.m_time_deleted && m_renamed_to == other.m_renamed_to
+					&& m_renamed_from == other.m_renamed_from;
 			}
 		};
 
@@ -142,11 +129,13 @@ namespace supercloud {
 		typedef std::shared_ptr<TreeAnswer> TreeAnswerPtr;
 
 		struct InvalidateElementsMessage {
-			ComputerId modifier;
 			DateTime last_invalidation_time;
+			// elt that are invalidated
 			std::vector<FsID> modified;
+			// commits that invalidated the elements (computer-modifier is the cid inside it)
+			std::vector<FsCommitID> commits;
 			bool operator==(const InvalidateElementsMessage& other) const {
-				return modifier == other.modifier && modified == other.modified;
+				return commits == other.commits && modified == other.modified;
 			}
 		};
 
@@ -195,8 +184,8 @@ namespace supercloud {
 
 		//future allow to block execution until there is a result.
 		//callback avoid the need to fetch the result afterwards if it's not blocking.
-		std::future<TreeAnswerPtr> fetchTree(/*ComputerId cid, */FsID root);
-		void fetchTree(/*ComputerId cid, */FsID root, const std::function<void(TreeAnswerPtr)>& callback);
+		std::future<TreeAnswerPtr> fetchTree(FsID root, ComputerId cid = NO_COMPUTER_ID);
+		void fetchTree(/*ComputerId cid, */FsID root, const std::function<void(TreeAnswerPtr)>& callback, ComputerId cid = NO_COMPUTER_ID);
 		// it will create the registration, and put the request id inside the 'unregistered_request' object
 		SynchTreeMessageManager::TreeAnswerRequest& SynchTreeMessageManager::registerRequest(TreeRequest& unregistered_request, ComputerId cid);
 

@@ -21,6 +21,10 @@ namespace supercloud {
 	public:
 		FsChunk(FsID id, DateTime date, uint64_t hash) :FsElt(id, date), m_hash(hash) { assert(FsElt::isChunk(id)); }
 
+		virtual bool isChunk() const override { return true; }
+		virtual bool isFile() const override { return false; }
+		virtual bool isDir() const override { return false; }
+
 		/// <summary>
 		/// use the hash to see if the data we have are in sync with it.
 		/// This impl read the data in a buffer, so you may want to reimplement it if you have a better way to compute a hash, at least to avoid a copy.
@@ -97,7 +101,7 @@ namespace supercloud {
 
 		bool read(uint8_t* toAppend, size_t offset, size_t size) const override {};
 		size_t size() const override { return m_size; }
-		DateTime getLastAccessDate() override { return getDate(); }
+		DateTime getLastAccessDate() override { return getCreationTime(); }
 	};
 
 }

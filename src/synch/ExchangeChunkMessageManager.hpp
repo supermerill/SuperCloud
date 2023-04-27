@@ -81,17 +81,17 @@ namespace supercloud {
 				: FsChunk(id, date, hash),
 				m_partial_data(std::move(partial_data)), /*m_partial_offset(partial_offset), m_partial_hash(partial_hash),*/
 				m_real_size(real_size), real_file_offset(file_offset) {}
-			FsChunkTempElt(FsChunkPtr real) : FsChunk(real->getId(), real->getDate(), real->getHash()),
+			FsChunkTempElt(FsChunkPtr real) : FsChunk(real->getId(), real->getCreationTime(), real->getHash()),
 				m_partial_data(), /*m_partial_offset(partial_offset), m_partial_hash(partial_hash),*/
 				m_real_size(real->size()), real_file_offset(0), m_real_chunk(real) {}
-			//FsChunkTempElt(FsChunkTempElt&& other) : FsChunk(other.getId(), other.getDate(), other.getHash()),
+			//FsChunkTempElt(FsChunkTempElt&& other) : FsChunk(other.getId(), other.getCreationTime(), other.getHash()),
 			//	m_partial_data(other.m_partial_data), /*m_partial_offset(partial_offset), m_partial_hash(partial_hash),*/
 			//	m_real_size(other.m_real_size), real_file_offset(other.real_file_offset), m_real_chunk(other.m_real_chunk) {}
 			FsChunkTempElt(const FsChunkTempElt&) = delete; // can't copy
 			FsChunkTempElt& operator=(const FsChunkTempElt&) = delete; // can't copy
 			bool operator==(const FsChunkTempElt& other) const { //for test, it's not an efficient compare.
 				bool ok = size() == other.size();
-				ok &= m_id == other.m_id && m_creation_date == other.m_creation_date && m_hash == other.m_hash && m_is_local == other.m_is_local && size() == other.size();
+				ok &= m_id == other.m_id && m_creation_time == other.m_creation_time && m_hash == other.m_hash && m_is_local == other.m_is_local && size() == other.size();
 				if (ok) {
 					size_t data_size = size();
 					std::vector<uint8_t> read1(data_size, uint8_t(0));

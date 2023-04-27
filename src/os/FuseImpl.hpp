@@ -76,10 +76,10 @@ public:
         stat_to_fill.st_ino = fsidTOino_t(obj->getId()); //uin16_t
         stat_to_fill.st_uid = m_file_manager->getUserId(obj->getOwner());
         stat_to_fill.st_gid = obj->getGroupId();
-        stat_to_fill.st_ctime = obj->getDate();
+        stat_to_fill.st_ctime = obj->getCreationTime();
         //if(stat_to_fill.st_birthtime != nullptr){
-        //       stat_to_fill.st_birthtime.tv_sec = obj.getDate()/1000;
-        //       stat_to_fill.st_birthtime.tv_nsec = obj.getDate()*1000;
+        //       stat_to_fill.st_birthtime.tv_sec = obj.getCreationTime()/1000;
+        //       stat_to_fill.st_birthtime.tv_nsec = obj.getCreationTime()*1000;
         //}
         if (FsElt::isFile(obj->getId())) {
             stat_to_fill.st_size = FsElt::toFile(obj)->size();

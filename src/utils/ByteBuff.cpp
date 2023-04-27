@@ -116,6 +116,14 @@ ByteBuff& ByteBuff::put(const std::vector<uint8_t>& src)
     return *this;
 }
 
+#ifdef _DEBUG
+std::vector<uint8_t> ByteBuff::view() const {
+    std::vector<uint8_t> newBuff(this->m_limit);
+    std::copy(this->m_buffer.get() , this->m_buffer.get() + this->m_limit, newBuff.begin());
+    return newBuff;
+}
+#endif
+
 /**
  * Put data into dest (from this->m_position).
  * @param dest destination array

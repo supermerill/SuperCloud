@@ -29,9 +29,9 @@ namespace supercloud {
 #define deserializeComputerId getUInt
 	constexpr ComputerId COMPUTER_ID_MASK = 0x00FFFFFF;
 
-	constexpr ComputerId NO_COMPUTER_ID = ComputerId(-1);
-	constexpr uint64_t NO_CLUSTER_ID = uint64_t(-1);
-	constexpr PeerId NO_PEER_ID = PeerId(-1);
+	constexpr ComputerId NO_COMPUTER_ID = ComputerId(0);
+	constexpr uint64_t NO_CLUSTER_ID = uint64_t(0);
+	constexpr PeerId NO_PEER_ID = PeerId(0);
 
 	//TODO crypt
 	typedef std::vector<uint8_t> PublicKey; //can't use string because 0x00 create problems.

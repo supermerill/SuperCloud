@@ -46,6 +46,10 @@ namespace supercloud {
      *
      */
     class PhysicalServer : public ClusterManager, public std::enable_shared_from_this<PhysicalServer> {
+#ifdef _DEBUG
+    public:
+        std::string name;
+#endif
     protected:
 
         ServerConnectionState m_state;

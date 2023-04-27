@@ -24,7 +24,7 @@ namespace supercloud {
 
 
     void ExchangeChunkMessageManager::receiveMessage(PeerPtr sender, uint8_t messageId, const ByteBuff& message) {
-        if (sender->getComputerId() == 0 || sender->getComputerId() == NO_COMPUTER_ID) {
+        if (sender->getComputerId() == NO_COMPUTER_ID) {
             //error: not a estabished peer
             error(std::string("Error, peer ") + std::to_string(sender->getPeerId() % 100) + " ask us a chunk and he doens't have a computerid !");
             return;
@@ -517,7 +517,7 @@ namespace supercloud {
         buff.put(answer.chunk?1:0);
         if (answer.chunk) {
             buff.putULong(answer.chunk->getId());
-            buff.putLong(answer.chunk->getDate());
+            buff.putLong(answer.chunk->getCreationTime());
             buff.putULong(answer.chunk->getHash());
             size_t chunk_size = answer.chunk->size();
             buff.putSize(chunk_size);
