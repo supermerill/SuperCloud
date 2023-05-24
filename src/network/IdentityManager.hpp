@@ -77,12 +77,10 @@ protected:
 	PeerPtr m_myself;
 
 	//database peers
-	mutable std::mutex m_loaded_peers_mutex;
-	PeerList m_loaded_peers;
 	mutable std::mutex tempPubKey_mutex;
 	std::unordered_map<PeerId, PublicKeyHolder> tempPubKey; // unidentified pub key
 	mutable std::mutex m_peer_data_mutex;
-	std::unordered_map<PeerPtr, PeerData> m_peer_2_peerdata;
+	std::unordered_map<const Peer*, PeerData> m_peer_2_peerdata;
 	PhysicalServer& serv;
 
 	ComputerIdState myComputerIdState = ComputerIdState::NOT_CHOOSEN;
@@ -110,7 +108,7 @@ public:
 			port = m_parameters->getInt("publicPort", 0);
 		}
 		m_myself = Peer::create(serv, ip, port, Peer::ConnectionState::US);
-		m_peer_2_peerdata[m_myself].peer = m_myself;
+		m_peer_2_peerdata[m_myself.get()].peer = m_myself;
 	}
 	IdentityManager& setInstallParameters(std::shared_ptr<Parameters> parameters) {
 		m_install_parameters = parameters;
@@ -130,12 +128,12 @@ public:
 	/// Return a copy of the list of loaded peers (from the stored file, and the data sent by the actual connected peers). Please don't modify the peers.
 	/// </summary>
 	/// <returns>a new vector of my peerPtr.</returns>
-	PeerList getLoadedPeers() { std::lock_guard lock{ m_loaded_peers_mutex };  return m_loaded_peers; }
-	PeerPtr getLoadedPeer(ComputerId cid);
-	PeerData getPeerData(ComputerId cid) { return getPeerData(getLoadedPeer(cid)); }
-	bool hasPeerData(PeerPtr peer) const; // shouldnt be necessary?
-	PeerData getPeerData(PeerPtr peer) const;
-	PeerData getSelfPeerData() const { return getPeerData(m_myself); }
+	std::vector<IdentityManager::PeerData> IdentityManager::getLoadedPeerData();
+	//PeerPtr getLoadedPeer(ComputerId cid);
+	PeerData getPeerData(ComputerId cid);// { return getPeerData(getLoadedPeer(cid).get()); }
+	bool hasPeerData(const Peer* peer) const; // shouldnt be necessary?
+	PeerData getPeerData(const Peer* peer) const;
+	PeerData getSelfPeerData() const { return getPeerData(m_myself.get()); }
 	//don't use it outside of debugging
 	bool setPeerData(const PeerData& original, const PeerData& new_data);
 
@@ -145,7 +143,7 @@ public:
 	EncryptionType getPublicKeyType() const { return  m_public_key.type; }//for tests
 	PrivateKey getPrivateKey() const { return m_private_key; }//for tests
 #endif
-	PublicKey getPublicKey(PeerPtr key) const {
+	PublicKey getPublicKey(const Peer* key) const {
 		{ std::lock_guard lock{ this->m_peer_data_mutex };
 			auto it = m_peer_2_peerdata.find(key);
 			if (it != m_peer_2_peerdata.end())
@@ -155,18 +153,7 @@ public:
 	}
 
 	//setters
-	void removeBadPeer(PeerPtr badPeer) {
-		{std::lock_guard lock{ m_loaded_peers_mutex };
-			foreach(it , m_loaded_peers) {
-				if (*it == badPeer) {
-					log(std::to_string(this->getSelfPeer()->getPeerId() % 100) + " remove bad peer from idmana: " + std::to_string(badPeer->getPeerId() % 100));
-					(*it)->close();
-					it.erase();
-					break;
-				}
-			}
-		}
-		//also erase the bad computer id
+	void removeBadPeer(const Peer* badPeer) {
 		{ std::lock_guard lock{ this->m_peer_data_mutex };
 			m_peer_2_peerdata.erase(badPeer);
 		}
@@ -195,17 +182,17 @@ public:
 	//	}
 
 	//fusion (or add) a connected peer to our lists 
-	void fusionWithConnectedPeer(PeerPtr peer);
+	void fusionWithConnectedPeer(const PeerPtr& peer);
 	// add an unconnected peer to our list of possible peers.
 	PeerPtr addNewPeer(ComputerId computerId, const PeerData& data);
 
 	//request->send->receive a public key from a peer
 	//void requestPublicKey(Peer& peer);
-	void sendPublicKey(PeerPtr peer);
-	void receivePublicKey(PeerPtr peer, const ByteBuff& buffIn);
+	void sendPublicKey(const PeerPtr& peer);
+	void receivePublicKey(const PeerPtr& peer, const ByteBuff& buffIn);
 
 	// mesage to verify the peer identity
-	std::string createMessageForIdentityCheck(Peer& peer, bool forceNewOne);
+	std::string createMessageForIdentityCheck(const Peer& peer, bool forceNewOne);
 
 
 	ByteBuff getIdentityDecodedMessage(const PublicKeyHolder& key, const ByteBuff& buffIn);
@@ -214,7 +201,13 @@ public:
 	//send our public key to the peer, with the message encoded
 	Identityresult sendIdentity(PeerPtr peer, const std::string& messageToEncrypt, bool isRequest);
 	Identityresult answerIdentity(PeerPtr peer, const ByteBuff& buffIn);
-	Identityresult receiveIdentity(PeerPtr peer, const ByteBuff& buffIn);
+	/// <summary>
+	/// 
+	/// </summary>
+	/// <param name="peer">not const because this method can call: close(), setComputerId()</param>
+	/// <param name="buffIn"></param>
+	/// <returns></returns>
+	Identityresult receiveIdentity(Peer& peer, const ByteBuff& buffIn);
 
 	//can't be const because of the mutex
 	void requestSave();
@@ -244,17 +237,22 @@ public:
 
 
 	//note: the proposal/confirm thing work because i set my aes key before i emit my proposal.
-
-	void sendAesKey(PeerPtr peer, uint8_t aesState);
+	
+	/// <summary>
+	/// 
+	/// </summary>
+	/// <param name="peer">not because we can call: writeMessage</param>
+	/// <param name="aesState"></param>
+	void sendAesKey(Peer& peer, uint8_t aesState);
 
 	/// <summary>
 	/// use the message to check if the aes key sent to us is acceptable.
 	/// This can lead to another aes message, as long as we can't agree on a same aes key.
 	/// </summary>
-	/// <param name="peer"></param>
+	/// <param name="peer">not const because we can call: close, sendAesKey </param>
 	/// <param name="message"></param>
 	/// <returns>true if the aes key is valid and accepted by both of us (as much as possible)</returns>
-	bool receiveAesKey(PeerPtr peer, const ByteBuff& message);
+	bool receiveAesKey(Peer& peer, const ByteBuff& message);
 
 	EncryptionType getEncryptionType() { return m_encryption_type; }
 protected:

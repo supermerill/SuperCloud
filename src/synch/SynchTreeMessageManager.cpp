@@ -157,8 +157,7 @@ namespace supercloud {
 		std::vector<InvalidateElementsMessage> msgs;
 		size_t nb_msg = buffer.getSize();
 		for (size_t i_msg = 0; i_msg < nb_msg; ++i_msg) {
-			msgs.emplace_back();
-			InvalidateElementsMessage& msg = msgs.back();
+			InvalidateElementsMessage& msg = msgs.emplace_back();
 			msg.last_invalidation_time = buffer.getLong();
 			size_t nb_roots = buffer.getSize();
 			for (size_t i_id = 0; i_id < nb_roots; ++i_id) {
@@ -209,6 +208,8 @@ namespace supercloud {
 				it.erase();
 			} else if (enforced_cid != NO_COMPUTER_ID && (*it)->getComputerId() != enforced_cid) {
 				it.erase();
+			} else {
+				already_seen.insert((*it)->getComputerId());
 			}
 		}
 		if (!peers.empty()) {
@@ -218,7 +219,7 @@ namespace supercloud {
 			for (PeerPtr& peer : peers) {
 				all_peers->insert(peer->getComputerId());
 			}
-			auto callback_wait_all = [full_answer, all_peers, callback_caller](TreeAnswer* answer) {
+			auto callback_wait_all = [this, root, full_answer, all_peers, callback_caller](TreeAnswer* answer) {
 				if (!all_peers->empty()) {
 					all_peers->erase(answer->from);
 					if (full_answer->answer_time < answer->answer_time) {
@@ -228,6 +229,9 @@ namespace supercloud {
 						full_answer->deleted.insert(full_answer->deleted.end(), answer->deleted.begin(), answer->deleted.end());
 					}
 					if (all_peers->empty()) {
+						//update invalidation if we couldn't get the request (TODO: maybe find a better spot for that? this one is convenient as it ensure we have hexausted our options)
+						// it's alredy merged, so it should be validated anyway. so just ensure it is not invalidated anymore.
+						this->ensureNotInvalidated(root);
 						callback_caller(full_answer);
 					}
 				}
@@ -258,6 +262,10 @@ namespace supercloud {
 				peer->writeMessage(*SynchMessagetype::GET_TREE, buff);// writeTreeRequestMessage(request));
 			}
 		}
+	}
+
+	void SynchTreeMessageManager::ensureNotInvalidated(const FsID root) {
+		this->m_syncro->removeInvalidatedElements({ root });
 	}
 
 	ByteBuff SynchTreeMessageManager::writeTreeRequestMessage(const TreeRequest& request) {
@@ -321,6 +329,26 @@ namespace supercloud {
 			stD += ", " + std::to_string(obj.elt_id % 1000);
 		}
 		log(std::to_string(m_network->getPeerId() % 100) + std::string(" Send objects {") + stC + "}, {" + stM + "}, {" + stD + "}");
+
+		//not possible to create & delete at the same time
+		//or to create & modify: just create 
+		std::unordered_set<FsID> already_inside;
+		for (auto& obj : answer.created) {
+			assert(already_inside.find(obj->getId()) == already_inside.end());
+			already_inside.insert(obj->getId());
+		}
+		for (auto& obj : answer.modified) {
+			assert(already_inside.find(obj.elt_id) == already_inside.end());
+			already_inside.insert(obj.elt_id);
+		}
+		for (auto& obj : answer.deleted) {
+			assert(already_inside.find(obj.elt_id) == already_inside.end());
+			already_inside.insert(obj.elt_id);
+		}
+		for (auto& obj_id : answer.unchanged) {
+			assert(already_inside.find(obj_id) == already_inside.end());
+		}
+
 #endif
 		ByteBuff buffer;
 		buffer.putULong(answer.request_id);
@@ -631,7 +659,9 @@ namespace supercloud {
 	}
 
 	void SynchTreeMessageManager::useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& partial_answer) {
-		std::lock_guard lock{ m_mutex_incomplete_requests };
+		bool need_to_send_invalidation = false;
+		std::map<FsID, FsID> item2commit; // to check if something has changed
+		{std::lock_guard lock{ m_mutex_incomplete_requests };
 		//fusion the result with currently waiting answers?
 		TreeAnswerRequest* our_answer_request_storage;
 		if (auto it = m_incomplete_requests.find(partial_answer.request_id); it != m_incomplete_requests.end()) {
@@ -649,7 +679,7 @@ namespace supercloud {
 		} else {
 			// create a new answer.... should already be created, no? => not if we don't ask anything and the peer just want to push a change to us directly.
 			assert(partial_answer.request_id == 0);
-			log(std::to_string(m_network->getPeerId()%100) + " receive a push from " + (sender->getPeerId()%100));
+			log(std::to_string(m_network->getPeerId() % 100) + " receive a push from " + (sender->getPeerId() % 100));
 			//registerAnswer();
 			partial_answer.request_id = FsElt::createId(FsType::NONE, m_request_id_generator.fetch_add(1), m_network->getComputerId());
 			TreeAnswerRequest& req = m_incomplete_requests[partial_answer.request_id];
@@ -660,6 +690,8 @@ namespace supercloud {
 			req.our_answer = partial_answer;
 			req.start = m_network->getCurrentTime();
 			our_answer_request_storage = &req;
+			//as it's a push, send invalidation to other peers.
+			need_to_send_invalidation = true;
 		}
 		TreeAnswer& answer = our_answer_request_storage->our_answer;
 
@@ -757,7 +789,7 @@ namespace supercloud {
 			}
 
 			our_answer_request_storage->finished = false;
-		
+
 			log(std::string("TREE REQUEST (useTreeRequestAnswer): ") + (m_network->getPeerId() % 100) + " ask " + (sender->getPeerId() % 100) + " for a request (still unknown ids)");
 			sender->writeMessage(*SynchMessagetype::GET_TREE, this->writeTreeRequestMessage(request));
 		} else {
@@ -777,31 +809,61 @@ namespace supercloud {
 			for (const TreeAnswerEltChange& obj : answer.modified) {
 				stub_storage.emplace_back(obj.elt_id, obj.elt_depth);
 				stub_storage.back().setCommit(obj.state, obj.last_commit_id, obj.last_commit_time, obj.sizes);
-				ordered_stubs[obj.elt_depth] = &stub_storage.back();
-				db_stubs[obj.elt_id] = &stub_storage.back();
-				stubs_to_merge.push_back(&stub_storage.back());
 			}
 			for (const TreeAnswerEltDeleted& obj : answer.deleted) {
 				stub_storage.emplace_back(obj.elt_id, obj.elt_depth);
 				stub_storage.back().setCommit({}, obj.last_commit_id, obj.last_commit_time, {})
 					.setDeleted(obj.renamed_to, obj.last_commit_time);
-				ordered_stubs[obj.elt_depth] = &stub_storage.back();
-				db_stubs[obj.elt_id] = &stub_storage.back();
-				stubs_to_merge.push_back(&stub_storage.back());
 			}
-			
+			//now stub_storage is read-only, we can use pointers.
+			for (const FsObjectTreeAnswer& obj : stub_storage) {
+				ordered_stubs[obj.getDepth()] = &obj;
+				db_stubs[obj.getId()] = &obj;
+				stubs_to_merge.push_back(&obj);
+			}
+
 			//update our fs with these
 			//for (const auto& depth2stub : ordered_stubs) {
 			//	m_syncro->mergeCommit(sender->getComputerId(), *depth2stub.second, db_stubs, answer.from);
 			//}
 			//update our fs with these
-			log(std::string("fsbefore:") + m_filesystem->getDatabase().size());
+			//log(std::string("fsbefore:") + m_filesystem->getDatabase().size());
 			m_syncro->mergeCommit(sender->getComputerId(), stubs_to_merge, answer.from);
-			log(std::string("fsafter:") + m_filesystem->getDatabase().size());
+			//log(std::string("fsafter:") + m_filesystem->getDatabase().size());
+			//note: maybe some changes are too old for my fs and so discarded.
 
 			// unchanged element are now validated again!
 			//Do i need ot check for the right peer? If i mess up the one i ask for, it's my fault, i guess.
 			m_syncro->removeInvalidatedElements(answer.unchanged);
+
+			// gather current merged commits
+			if (need_to_send_invalidation) {
+				for (const FsObjectTreeAnswerPtr& obj : answer.created) {
+					if (this->m_filesystem->hasLocally(obj->getId())) {
+						FsObjectPtr local_obj = this->m_filesystem->loadObject(obj->getId());
+						if (local_obj && !local_obj->getCommits().empty()) {
+							item2commit[obj->getId()] = local_obj->getCommits().back().id;
+						}
+					}
+				}
+				for (const TreeAnswerEltChange& obj : answer.modified) {
+					if (this->m_filesystem->hasLocally(obj.elt_id)) {
+						FsObjectPtr local_obj = this->m_filesystem->loadObject(obj.elt_id);
+						if (local_obj && !local_obj->getCommits().empty()) {
+							item2commit[obj.elt_id] = local_obj->getCommits().back().id;
+						}
+					}
+				}
+				for (const TreeAnswerEltDeleted& obj : answer.deleted) {
+					if (this->m_filesystem->hasLocally(obj.elt_id)) {
+						FsObjectPtr local_obj = this->m_filesystem->loadObject(obj.elt_id);
+						if (local_obj && !local_obj->getCommits().empty()) {
+							item2commit[obj.elt_id] = local_obj->getCommits().back().id;
+						}
+					}
+				}
+			}
+
 
 			our_answer_request_storage->finished = true;
 			our_answer_request_storage->finished_since = m_network->getCurrentTime();
@@ -814,6 +876,34 @@ namespace supercloud {
 			// assert that the resulted filesystem is safe
 			m_filesystem->checkFilesystem();
 #endif
+		}}
+		// emit notifications for updated (maybe) items
+		if (need_to_send_invalidation && !item2commit.empty()) {
+			InvalidateElementsMessage invalidation;
+			// TODO: is this the good time? check how it's used.
+			invalidation.last_invalidation_time = m_network->getCurrentTime();
+			for (auto& elt : item2commit) {
+				invalidation.modified.push_back(elt.first);
+				invalidation.commits.push_back(elt.second);
+			}
+			//for each peer
+			PeerList peers = m_network->getPeersCopy();
+			std::unordered_set<ComputerId> already_seen;
+			foreach(it, peers) {
+				ComputerId cid = (*it)->getComputerId();
+				if (!(*it)->isConnected() || already_seen.find(cid) != already_seen.end()) {
+					it.erase();
+				} else if (cid == m_network->getComputerId() || cid == sender->getComputerId()) {
+					// but us and the caller
+					it.erase();
+				} else {
+					already_seen.insert(cid);
+				}
+			}
+			ByteBuff buffer = this->writeInvalidateEltsMessage({ invalidation });
+			for (PeerPtr& peer : peers) {
+				peer->writeMessage(*SynchMessagetype::SEND_INVALIDATE_ELT, buffer.rewind());
+			}
 		}
 	}
 }

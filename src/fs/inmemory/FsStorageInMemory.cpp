@@ -556,7 +556,7 @@ myfile.close();
                     dir_factory = std::make_unique<FsDirectoryInMemoryFactory>(new_dir_commit);
                     factory = dir_factory.get();
                 }
-                // it should have at least one comit if not empty.
+                // it should have at least one commit if not empty.
                 if (factory->commits.empty()) {
                     assert(factory->current_state.empty());
                     factory->current_state.clear();

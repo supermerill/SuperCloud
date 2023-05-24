@@ -122,17 +122,17 @@ namespace supercloud {
                 PeerPtr& nextP = itPeers.next();
                 if (this->getComputerId() != NO_COMPUTER_ID && nextP->getComputerId() == this->getComputerId()) {
                     error(std::string("Error: a peer (")+ (nextP->getPeerId()%100)+") is me (" + (getPeerId() % 100) + ") (same computerid) " + this->getComputerId());
-                    getIdentityManager().removeBadPeer(nextP);
+                    getIdentityManager().removeBadPeer(nextP.get());
                     nextP->close();
                     itPeers.erase();
                 } else if (this->hasPeerId() && nextP->getPeerId() == this->getPeerId()) {
                     error(std::string(" Error: a peer (") + (nextP->getPeerId() % 100) +") is me (" + (getPeerId() % 100) + ") (same peerId) ");
-                    getIdentityManager().removeBadPeer(nextP);
+                    getIdentityManager().removeBadPeer(nextP.get());
                     nextP->close();
                     itPeers.erase();
                 } else if (!nextP->isAlive()){
                     error(std::to_string(getPeerId() % 100) + std::string(" Error: a peer (") + (nextP->getPeerId() % 100) +") is dead: clean it" );
-                    getIdentityManager().removeBadPeer(nextP);
+                    getIdentityManager().removeBadPeer(nextP.get());
                     nextP->close();
                     itPeers.erase();
                 }else if ((nextP->getComputerId() == NO_COMPUTER_ID) && nextP->createdAt < now - 2 * 60 * 1000) {
@@ -660,8 +660,8 @@ namespace supercloud {
 
     void PhysicalServer::connect() {
         //TODO: call a ClusterAdminMessageManager method instead, so we try to connect the best first
-        for (PeerPtr& peer : getIdentityManager().getLoadedPeers()) {
-            std::future<bool> wait = this->connect(peer, peer->getIP(), peer->getPort(), 1000);
+        for (const IdentityManager::PeerData& peer_data : getIdentityManager().getLoadedPeerData()) {
+            std::future<bool> wait = this->connect(peer_data.peer, peer_data.peer->getIP(), peer_data.peer->getPort(), 1000);
             //discard the future
         }
     }

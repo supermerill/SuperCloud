@@ -234,8 +234,8 @@ namespace supercloud{
 		}
 		// this->publicKey is just a cache for m_peer_2_peerdata[getComputerId()].rsa_public_key
 		{std::lock_guard lock(m_peer_data_mutex);
-			assert(m_peer_2_peerdata.find(m_myself) != m_peer_2_peerdata.end());
-			m_peer_2_peerdata[this->m_myself].rsa_public_key = this->m_public_key;
+			assert(m_peer_2_peerdata.find(this->m_myself.get()) != m_peer_2_peerdata.end());
+			m_peer_2_peerdata[this->m_myself.get()].rsa_public_key = this->m_public_key;
 		}
 		//requestSave(); // should be done by caller
 	}
@@ -397,7 +397,7 @@ namespace supercloud{
 		std::shared_ptr<CryptoppAES> our_encoder;
 #endif
 		{ std::lock_guard lock(m_peer_data_mutex);
-			if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+			if (auto it = this->m_peer_2_peerdata.find(peer.get()); it != this->m_peer_2_peerdata.end()) {
 				our_secret_key = it->second.aes_key;
 #ifndef NO_CRYPTOPP
 				our_encoder = std::static_pointer_cast<CryptoppAES>(it->second.aes_encoder);
@@ -420,7 +420,7 @@ namespace supercloud{
 				our_encoder->decoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
 				//update cache storage
 				{ std::lock_guard lock(m_peer_data_mutex);
-				if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+				if (auto it = this->m_peer_2_peerdata.find(peer.get()); it != this->m_peer_2_peerdata.end()) {
 					it->second.aes_encoder = our_encoder;
 				}
 				}
@@ -445,7 +445,7 @@ namespace supercloud{
 		std::shared_ptr<CryptoppAES> our_encoder;
 #endif
 		{ std::lock_guard lock(m_peer_data_mutex);
-			if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+			if (auto it = this->m_peer_2_peerdata.find(peer.get()); it != this->m_peer_2_peerdata.end()) {
 				our_secret_key = it->second.aes_key;
 #ifndef NO_CRYPTOPP
 				our_encoder = std::static_pointer_cast<CryptoppAES>(it->second.aes_encoder);
@@ -468,14 +468,14 @@ namespace supercloud{
 				our_encoder->decoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
 				//update cache storage
 				{ std::lock_guard lock(m_peer_data_mutex);
-					if (auto it = this->m_peer_2_peerdata.find(peer); it != this->m_peer_2_peerdata.end()) {
+					if (auto it = this->m_peer_2_peerdata.find(peer.get()); it != this->m_peer_2_peerdata.end()) {
 						it->second.aes_encoder = our_encoder;
 					}
 				}
 			}
 			//get the special iv for this exact message (crypto_secret_key is a copy, we can modify it)
 			for (size_t i = 0; i < crypto_secret_key.iv.size() - 7; i += 8) {
-				((uint64_t*)crypto_secret_key.iv.data())[i] ^= (message_counter + m_myself->getPeerId());
+				((uint64_t*)crypto_secret_key.iv.data())[i] ^= (message_counter + this->m_myself->getPeerId());
 			}
 			our_encoder->decoder.SetKeyWithIV(crypto_secret_key.key, crypto_secret_key.key.size(), crypto_secret_key.iv, crypto_secret_key.iv.size());
 			our_encoder->decoder.ProcessString(message.raw_array(), message.limit());

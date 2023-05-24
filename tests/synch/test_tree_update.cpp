@@ -1071,12 +1071,11 @@ namespace supercloud::test::updateree {
         REQUIRE(synch2->isInvalidated(3));
         REQUIRE(synch3->isInvalidated(3));
 
-        // ==STEP== +1minute
-        global_clock->offset += (1000 * 60 + 1000);
-        SynchroDb::debug_barrier = true;
+        // ==STEP== +3minute (cutoff is at 2 mintutes currently, because it's stored with a minute precision.
+        global_clock->offset += (3* 1000 * 60 + 1000);
         // ==STEP== B update -> no more changes possible (remove invalidation from timeout)
         serv2->update();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));// have to wait a bit the network process to transmit information
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));// have to wait a bit the network process to transmit information
         REQUIRE(!synch1->isInvalidated(3));
         REQUIRE(!synch2->isInvalidated(3));
         REQUIRE(synch3->isInvalidated(3));
@@ -1110,17 +1109,15 @@ namespace supercloud::test::updateree {
         
         // ==STEP== A update -> it send the changes by itself
         // -> B receive the changes.
-        // -> C is notified of the changes?
+        // -> C is notified of the changes, re-start the invalidation
         serv1->update();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));// have to wait a bit the network process to transmit information
-        serv2->update();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
         REQUIRE(fs1->loadDirectory(3)->getCurrent().size() == 1);
         REQUIRE(fs2->loadDirectory(3)->getCurrent().size() == 1);
         REQUIRE(fs3->loadDirectory(3)->getCurrent().size() == 0);
         REQUIRE(!synch1->isInvalidated(3));
         REQUIRE(!synch2->isInvalidated(3));
-        REQUIRE(!synch3->isInvalidated(3));
+        REQUIRE(synch3->isInvalidated(3));
         
         
         // ==STEP== time minutes pass
@@ -1139,6 +1136,19 @@ namespace supercloud::test::updateree {
         // ==STEP== C update -> request the changes.
         // -> B correctly send the new changes, A B and C aare now in synch
         serv3->update();
+        { // using the external interface for the synchronization to occur
+            std::filesystem::path path_request{ "/" };
+            path_request.make_preferred();
+            auto future = fsint3->get(path_request);
+            future.wait();
+            REQUIRE(future.valid());
+            auto fut_res = future.get();
+            REQUIRE(!fut_res.is_file);
+            REQUIRE(fut_res.error_code == 0);
+            FsDirPtr rootdir = FsElt::toDirectory(fut_res.object);
+            REQUIRE((bool)rootdir);
+            REQUIRE(rootdir->getCurrent().size() == 1);
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         REQUIRE(fs1->loadDirectory(3)->getCurrent().size() == 1);
         REQUIRE(fs2->loadDirectory(3)->getCurrent().size() == 1);

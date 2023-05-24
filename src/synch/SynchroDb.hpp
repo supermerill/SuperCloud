@@ -201,7 +201,9 @@ namespace supercloud {
             return shared_from_this();
         }
 
+#ifdef _DEBUG
         static inline bool debug_barrier = false;
+#endif
         static inline const Date MAX_RETENTION_DELETION_INFO = 60 * 24 * 30; // after 30 days, remove entries 'i don't have the chunk anymore'
 
         void init(std::shared_ptr<FsStorage> file_storage, std::shared_ptr<ClusterManager> network);

@@ -240,7 +240,7 @@ namespace supercloud{
                 requestCurrentStep(sender, true);
             } else {
                 //log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_VERIFY_IDENTITY");
-                IdentityManager::Identityresult result = clusterManager->getIdentityManager().receiveIdentity(sender, message);
+                IdentityManager::Identityresult result = clusterManager->getIdentityManager().receiveIdentity(*sender, message);
                 log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_VERIFY_IDENTITY, result="+ uint8_t(result));
                 if (result == IdentityManager::Identityresult::NO_PUB) {
                     sender->writeMessage(*UnnencryptedMessageType::GET_SERVER_PUBLIC_KEY);
@@ -252,19 +252,25 @@ namespace supercloud{
                     if (sender->isAlive()) { setStatus(sender, ConnectionStep::IDENTITY_VERIFIED); }
                     //ask for next step
                     std::string rsa_log_str;
-                    for (uint8_t c : clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data) {
-                        rsa_log_str += u8_hex(c);
-                    }
-                    log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) rsa ok: '"+ rsa_log_str +"'");
-                    assert(!clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty());
-                    //ask for next step (only if i'm feeling it, to avoid unneeded conflicts and connection delays)
-                    if (QUICKER_CONNECTION && sender->getPeerId() < clusterManager->getPeerId()) {
-                        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  I AM THE LEADER? I WILL ASK FOR SECRETE KEY");
-                        requestCurrentStep(sender, false);
-                    }//else, even if nothing is send by the other peer, the timer event should continue the connection.
-                    else {
-                        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  i am not the leader, i will shut up");
+                    IdentityManager::PeerData sender_data = clusterManager->getIdentityManager().getPeerData(sender.get());
+                    if (sender_data.peer) {
+                        for (uint8_t c : sender_data.rsa_public_key.raw_data) {
+                            rsa_log_str += u8_hex(c);
+                        }
+                        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) rsa ok: '" + rsa_log_str + "'");
+                        assert(!sender_data.rsa_public_key.raw_data.empty());
+                        //ask for next step (only if i'm feeling it, to avoid unneeded conflicts and connection delays)
+                        if (QUICKER_CONNECTION && sender->getPeerId() < clusterManager->getPeerId()) {
+                            log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  I AM THE LEADER? I WILL ASK FOR SECRETE KEY");
+                            requestCurrentStep(sender, false);
+                        }//else, even if nothing is send by the other peer, the timer event should continue the connection.
+                        else {
+                            log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  i am not the leader, i will shut up");
 
+                        }
+                    } else {
+                        log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  Error, no data for sender peer.");
+                        assert(false);
                     }
                 }
             }
@@ -272,13 +278,19 @@ namespace supercloud{
         if (messageId == *UnnencryptedMessageType::GET_SERVER_AES_KEY) {
             assert(sender->getComputerId() != 0);
             assert(sender->getComputerId() != NO_COMPUTER_ID);
-            assert(!clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty());
-            if (status[sender].current < ConnectionStep::IDENTITY_VERIFIED || sender->getComputerId() == 0
-                || sender->getComputerId() == NO_COMPUTER_ID || clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty()) {
-                requestCurrentStep(sender, true);
+            IdentityManager::PeerData sender_data = clusterManager->getIdentityManager().getPeerData(sender.get());
+            if (sender_data.peer) {
+                assert(!sender_data.rsa_public_key.raw_data.empty());
+                if (status[sender].current < ConnectionStep::IDENTITY_VERIFIED || sender->getComputerId() == 0
+                    || sender->getComputerId() == NO_COMPUTER_ID || sender_data.rsa_public_key.raw_data.empty()) {
+                    requestCurrentStep(sender, true);
+                } else {
+                    //log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive GET_SERVER_AES_KEY");
+                    clusterManager->getIdentityManager().sendAesKey(*sender, IdentityManager::AES_PROPOSAL);
+                }
             } else {
-                //log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive GET_SERVER_AES_KEY");
-                clusterManager->getIdentityManager().sendAesKey(sender, IdentityManager::AES_PROPOSAL);
+                log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager)  Error, no data for sender peer.");
+                assert(false);
             }
         } else
         if (messageId == *UnnencryptedMessageType::SEND_SERVER_AES_KEY) {
@@ -286,10 +298,10 @@ namespace supercloud{
                 requestCurrentStep(sender, true);
             } else {
                 //log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) receive SEND_SERVER_AES_KEY");
-                bool valid = clusterManager->getIdentityManager().receiveAesKey(sender, message);
+                bool valid = clusterManager->getIdentityManager().receiveAesKey(*sender, message);
                 if (valid && sender->isAlive()) { 
                     log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) AES ok!");
-                    assert(!clusterManager->getIdentityManager().getPeerData(sender).aes_key.empty());
+                    assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).aes_key.empty());
                     //update this manager status for this peer (track the connection progress)
                     this->setStatus(sender, ConnectionStep::AES);
                     //ask for next step
@@ -307,7 +319,7 @@ namespace supercloud{
             if (status[sender].current < ConnectionStep::AES) {
                 requestCurrentStep(sender, true);
             } else if (sender->getComputerId() == NO_COMPUTER_ID
-                || clusterManager->getIdentityManager().getPeerData(sender).aes_key.size() == 0) {
+                || clusterManager->getIdentityManager().getPeerData(sender.get()).aes_key.size() == 0) {
                 status[sender].current = ConnectionStep::RSA;
                 requestCurrentStep(sender, true);
             }else{
@@ -320,10 +332,9 @@ namespace supercloud{
             } else if(!sender->isConnected()){
                 log(std::to_string(clusterManager->getPeerId() % 100) + "<-" + (sender->getPeerId() % 100) + " (ConnectionMessageManager) SUCESSFUL connection: receive confirmation of aes.");
                 status[sender].current = ConnectionStep::CONNECTED;
-                auto aeff_test = clusterManager->getIdentityManager().getPeerData(sender);
-                assert(!clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty());
-                assert(!clusterManager->getIdentityManager().getPeerData(sender).aes_key.empty());
-                assert(clusterManager->getIdentityManager().getPeerData(sender).peer == sender);
+                assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).rsa_public_key.raw_data.empty());
+                assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).aes_key.empty());
+                assert(clusterManager->getIdentityManager().getPeerData(sender.get()).peer == sender);
                 //update the clusterManager connection status (track the connection of our computer to the network)
                 // clusterManager.state.finishConnection(sender->getComputerId())
                 this->m_connection_state.finishConnection(sender->getComputerId());
@@ -341,20 +352,22 @@ namespace supercloud{
 
                 //find if this peer isn't already loaded
                 clusterManager->getIdentityManager().fusionWithConnectedPeer(sender);
-                assert(!clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty());
-                assert(!clusterManager->getIdentityManager().getPeerData(sender).aes_key.empty());
-                assert(clusterManager->getIdentityManager().getPeerData(sender).peer == sender);
+                assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).rsa_public_key.raw_data.empty());
+                assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).aes_key.empty());
+                assert(clusterManager->getIdentityManager().getPeerData(sender.get()).peer == sender);
                 if (sender->initiatedByMe()) {
                     // save this successful connection
-                    IdentityManager::PeerData old_peer_data = clusterManager->getIdentityManager().getPeerData(sender);
-                    IdentityManager::PeerData peer_data = old_peer_data;
-                    // get local ip
-                    peer_data.private_interface = IdentityManager::PeerConnection{ sender->getIP(), sender->getPort(), true, {sender->getLocalIPNetwork()} };
-                    clusterManager->getIdentityManager().setPeerData(old_peer_data, peer_data);
+                    IdentityManager::PeerData old_peer_data = clusterManager->getIdentityManager().getPeerData(sender.get());
+                    if (old_peer_data.peer) {
+                        IdentityManager::PeerData peer_data = old_peer_data;
+                        // get local ip
+                        peer_data.private_interface = IdentityManager::PeerConnection{ sender->getIP(), sender->getPort(), true, {sender->getLocalIPNetwork()} };
+                        clusterManager->getIdentityManager().setPeerData(old_peer_data, peer_data);
+                    }
                 }
-                assert(!clusterManager->getIdentityManager().getPeerData(sender).rsa_public_key.raw_data.empty());
-                assert(!clusterManager->getIdentityManager().getPeerData(sender).aes_key.empty());
-                assert(clusterManager->getIdentityManager().getPeerData(sender).peer == sender);
+                assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).rsa_public_key.raw_data.empty());
+                assert(!clusterManager->getIdentityManager().getPeerData(sender.get()).aes_key.empty());
+                assert(clusterManager->getIdentityManager().getPeerData(sender.get()).peer == sender);
 
                 //update the peer connection status (track the connectivity of a single peer)
                 // now other manager can emit message to the peer, and be notified by timers.
@@ -569,7 +582,7 @@ namespace supercloud{
 
     ConnectionMessageManager::Data_SEND_SERVER_LIST ConnectionMessageManager::create_Data_SEND_SERVER_LIST(PeerPtr other) {
         IdentityManager& idm = this->clusterManager->getIdentityManager();
-        const std::vector<PeerPtr>& registered = idm.getLoadedPeers();
+        const std::vector<IdentityManager::PeerData>& registered = idm.getLoadedPeerData();
         const PeerList& connected = this->clusterManager->getPeersCopy();
         Data_SEND_SERVER_LIST data;
         // == put our id if any ==
@@ -584,18 +597,21 @@ namespace supercloud{
             data.registered_computer_id.insert(clusterManager->getComputerId());
             data.registered_peer_id.insert(clusterManager->getPeerId());
         }
-        for (const PeerPtr& peer : registered) {
+        for (const IdentityManager::PeerData& peer_data : registered) {
+            const PeerPtr& peer = peer_data.peer;
             // also send entry points? i don't think if it's something desirable.
-            if (!(peer->getState() & Peer::ENTRY_POINT)) {
+            if (!(peer->getState() & Peer::ENTRY_POINT) && !(peer->getState() & Peer::US)) {
                 assert(peer->getComputerId() != 0);
                 assert(peer->getComputerId() != NO_COMPUTER_ID);
                 assert(peer->getState() & Peer::DATABASE);
                 assert(!(peer->getState() & Peer::TEMPORARY));
                 assert(!(peer->getState() & Peer::US));
-                data.registered_computer_id.insert(peer->getComputerId());
-                //the peer can have no pid if it's not connected.
-                if (peer->getPeerId() != 0 && peer->getPeerId() != NO_PEER_ID) {
-                    data.registered_peer_id.insert(peer->getPeerId());
+                if (peer->getComputerId() != 0 && peer->getComputerId() != NO_COMPUTER_ID) {
+                    data.registered_computer_id.insert(peer->getComputerId());
+                    //the peer can have no pid if it's not connected.
+                    if (peer->getPeerId() != 0 && peer->getPeerId() != NO_PEER_ID) {
+                        data.registered_peer_id.insert(peer->getPeerId());
+                    }
                 }
             }
         }
@@ -623,10 +639,9 @@ namespace supercloud{
         }
         //add its key
         if (other && other->getComputerId() != 0 && other->getComputerId() != NO_COMPUTER_ID) {
-            PeerPtr other_in_our_db = idm.getLoadedPeer(other->getComputerId()); // should be the same as 'other', but maybe not if they initiated the connection.
-            if (other_in_our_db && idm.hasPeerData(other_in_our_db)) {
-                IdentityManager::PeerData other_data = idm.getPeerData(other_in_our_db);
-                if (!other_data.rsa_public_key.raw_data.empty()) {
+            IdentityManager::PeerData other_in_our_db = idm.getPeerData(other->getComputerId()); // should be the same as 'other', but maybe not if they initiated the connection.
+            if (other_in_our_db.peer) {
+                if (!other_in_our_db.rsa_public_key.raw_data.empty()) {
                     data.our_keys[clusterManager->getComputerId()] = idm.getPublicKey();
                 }
             }

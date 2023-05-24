@@ -198,6 +198,7 @@ namespace supercloud {
 		ByteBuff writeTreeAnswerMessage(const TreeAnswer& request);
 		TreeAnswer readTreeAnswerMessage(const ByteBuff& buffer);
 		void useTreeRequestAnswer(const PeerPtr sender, TreeAnswer&& answer);
+		void ensureNotInvalidated(const FsID root);
 
 		// SEND_INVALIDATE_ELT
 		void emitModificationsNotification(std::unordered_map<FsID, Invalidation> modified);

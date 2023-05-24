@@ -40,9 +40,6 @@ namespace supercloud {
             this->update(current_time);
         } else if (message_id == *UnnencryptedMessageType::TIMER_MINUTE) {
             //get current DateTime
-            if (debug_barrier) {
-                int i = 0;
-            }
             DateTime current_time = message.rewind().getLong();
             // remove old invalidation. they should already have been updated.
             {std::lock_guard lock{ m_invalidated_mutex };
